@@ -1,19 +1,20 @@
 from datetime import date
 import os
-from typing import Literal
+from typing import Literal, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+import jwt
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="CashPilot API", version="0.1.0")
+app = FastAPI(title="CashPilot API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,17 +50,51 @@ class WhatsAppRequest(BaseModel):
     body: str
 
 
+class UserTokenData(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    role: Optional[str] = "authenticated"
+
+
+# JWT Authorization Helper
+def verify_bearer_token(authorization: Optional[str] = Header(None)) -> UserTokenData:
+    if not authorization or not authorization.startswith("Bearer "):
+        # Unauthenticated request
+        return UserTokenData(user_id="anonymous", email=None)
+    token = authorization.split(" ")[1]
+    try:
+        # Decode unverified header/claims for identity in development/SSR mode
+        payload = jwt.decode(token, options={"verify_signature": False})
+        user_id = payload.get("sub", "anonymous")
+        email = payload.get("email")
+        role = payload.get("role", "authenticated")
+        return UserTokenData(user_id=user_id, email=email, role=role)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid Authorization Token")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "cashpilot-api"}
+    return {"status": "ok", "service": "cashpilot-api", "version": "0.2.0"}
+
+
+@app.get("/api/v1/auth/user")
+def get_current_user(user: UserTokenData = Depends(verify_bearer_token)) -> dict[str, object]:
+    return {
+        "authenticated": user.user_id != "anonymous",
+        "user_id": user.user_id,
+        "email": user.email,
+        "role": user.role,
+    }
 
 
 @app.get("/api/v1/overview")
-def overview() -> dict[str, object]:
+def overview(user: UserTokenData = Depends(verify_bearer_token)) -> dict[str, object]:
     return {
         "as_of": date.today().isoformat(),
         "status": "healthy",
         "runway_days": 42,
+        "user_id": user.user_id,
         "metrics": [
             Metric(label="Cash available", value="₹8.4L", note="+12.8% vs last month"),
             Metric(label="Receivables", value="₹31.7L", note="₹7.9L overdue"),
@@ -107,7 +142,7 @@ async def supabase_check() -> dict[str, object]:
     headers = {"apikey": publishable_key, "Authorization": f"Bearer {publishable_key}"}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(f"{project_url}/rest/v1/cashpilot_customers?select=id&limit=1", headers=headers)
+            response = await client.get(f"{project_url}/rest/v1/organizations?select=id&limit=1", headers=headers)
     except httpx.HTTPError:
         return {"connected": False, "database_ready": False, "message": "Supabase could not be reached."}
 
@@ -116,8 +151,8 @@ async def supabase_check() -> dict[str, object]:
     if response.status_code in (401, 403):
         return {"connected": True, "database_ready": True, "auth_required": True, "message": "CashPilot tables are present; sign in to access workspace data."}
     if response.is_error:
-        return {"connected": True, "database_ready": False, "message": "Supabase is reachable, but the CashPilot table is not accessible under the current RLS/key configuration."}
-    return {"connected": True, "database_ready": True, "message": "Supabase and CashPilot tables are connected."}
+        return {"connected": True, "database_ready": False, "message": "Supabase is reachable under current RLS configuration."}
+    return {"connected": True, "database_ready": True, "message": "Supabase and CashPilot enterprise schema are connected."}
 
 
 @app.get("/api/v1/testmail/address")
@@ -134,15 +169,15 @@ async def ai_insight(request: InsightRequest) -> dict[str, str | bool]:
     if not api_key:
         return {"configured": False, "insight": "Gemini is not configured. Add GEMINI_API_KEY to enable AI insights."}
 
-    prompt = f"You are CashPilot, an AI CFO for an Indian IT agency. Answer concisely with a recommendation.\nQuestion: {request.question}\nContext: {request.context}"
+    prompt = f"You are CashPilot, an AI CFO for an IT agency. Answer concisely with a recommendation.\nQuestion: {request.question}\nContext: {request.context}"
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(url, params={"key": api_key}, json={"contents": [{"parts": [{"text": prompt}]}]})
     except httpx.HTTPError:
-        return {"configured": True, "available": False, "insight": "Gemini could not be reached. Check the API key and network connection."}
+        return {"configured": True, "available": False, "insight": "Gemini could not be reached. Check network connection."}
     if response.is_error:
-        return {"configured": True, "available": False, "insight": "Gemini rejected the request. Replace the exposed API key with a newly generated key."}
+        return {"configured": True, "available": False, "insight": "Gemini rejected the request."}
     data = response.json()
     text = data["candidates"][0]["content"]["parts"][0]["text"]
     return {"configured": True, "available": True, "insight": text}
