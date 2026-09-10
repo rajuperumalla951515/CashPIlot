@@ -83,7 +83,7 @@ function SmartAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => 
       return;
     }
 
-    // Explicit Sign In Mode
+    // Sign In Flow
     if (mode === "signin") {
       const signInResult = await supabase.auth.signInWithPassword({ email, password });
       
@@ -93,58 +93,44 @@ function SmartAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => 
         return;
       }
 
-      // Check if user doesn't exist -> Attempt automatic registration
-      const errText = signInResult.error?.message.toLowerCase() || "";
-      if (errText.includes("invalid login credentials")) {
-        // Try auto sign-up
-        const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-        const signUpResult = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: redirectUrl,
-            data: {
-              full_name: fullName || email.split("@")[0],
-              org_name: orgName,
-              workspace_name: orgName,
-            },
+      // If user doesn't exist, try auto sign-up
+      const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
+      const signUpResult = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: redirectUrl,
+          data: {
+            full_name: fullName || email.split("@")[0],
+            org_name: orgName,
+            workspace_name: orgName,
           },
+        },
+      });
+
+      if (signUpResult.data.user) {
+        await supabase.from("profiles").upsert({
+          id: signUpResult.data.user.id,
+          full_name: fullName || email.split("@")[0],
+          updated_at: new Date().toISOString(),
         });
 
-        if (signUpResult.data.user) {
-          // Sync database profile
-          await supabase.from("profiles").upsert({
-            id: signUpResult.data.user.id,
-            full_name: fullName || email.split("@")[0],
-            updated_at: new Date().toISOString(),
-          });
-
-          if (signUpResult.data.session) {
-            onAuthenticated(signUpResult.data.user);
-            setBusy(false);
-            return;
-          }
-
-          // Try signing in immediately
-          const autoLogin = await supabase.auth.signInWithPassword({ email, password });
-          if (autoLogin.data.user) {
-            onAuthenticated(autoLogin.data.user);
-            setBusy(false);
-            return;
-          }
+        if (signUpResult.data.session) {
+          onAuthenticated(signUpResult.data.user);
+          setBusy(false);
+          return;
         }
 
-        // If user already existed but password was wrong
-        if (signUpResult.error?.message.toLowerCase().includes("user already registered")) {
-          setIsError(true);
-          setMessage("Invalid email or password. Please check your credentials.");
+        const autoLogin = await supabase.auth.signInWithPassword({ email, password });
+        if (autoLogin.data.user) {
+          onAuthenticated(autoLogin.data.user);
           setBusy(false);
           return;
         }
       }
 
       setIsError(true);
-      setMessage(signInResult.error?.message || "Authentication failed. Check your email and password.");
+      setMessage(signInResult.error?.message || "Invalid login credentials. Click 'Create an Account' below to register.");
       setBusy(false);
       return;
     }
