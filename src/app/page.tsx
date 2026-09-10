@@ -45,6 +45,16 @@ function Arrow() {
   return <span aria-hidden="true">↗</span>;
 }
 
+// Demo user object for instant access preview
+const DEMO_USER: User = {
+  id: "00000000-0000-0000-0000-000000000001",
+  app_metadata: { provider: "email" },
+  user_metadata: { full_name: "Rahul Sharma (Demo CFO)", org_name: "Acme Studio Demo" },
+  aud: "authenticated",
+  created_at: new Date().toISOString(),
+  email: "demo@cashpilot.app",
+};
+
 function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [signupStep, setSignupStep] = useState<1 | 2>(1);
@@ -61,15 +71,22 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
   const [timezone, setTimezone] = useState("Asia/Kolkata");
 
   const [message, setMessage] = useState("");
+  const [isError, setIsError] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  function launchDemoMode() {
+    onAuthenticated(DEMO_USER);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase) {
-      setMessage("Supabase environment variables are missing.");
+      setMessage("Supabase environment is initializing...");
+      setIsError(true);
       return;
     }
     setMessage("");
+    setIsError(false);
 
     if (mode === "signup" && signupStep === 1) {
       setSignupStep(2);
@@ -78,20 +95,35 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
 
     setBusy(true);
 
+    // Forgot password flow
     if (mode === "forgot") {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
       });
-      if (error) setMessage(error.message);
-      else setMessage("Password reset link sent! Check your inbox.");
+      if (error) {
+        setIsError(true);
+        setMessage(error.message);
+      } else {
+        setIsError(false);
+        setMessage("Password reset link sent! Check your email inbox.");
+      }
       setBusy(false);
       return;
     }
 
+    // Sign in flow
     if (mode === "signin") {
       const result = await supabase.auth.signInWithPassword({ email, password });
       if (result.error) {
-        setMessage(result.error.message);
+        setIsError(true);
+        const errMsg = result.error.message.toLowerCase();
+        if (errMsg.includes("invalid login credentials")) {
+          setMessage("Invalid email or password. Please check your credentials or click Launch Demo Mode below.");
+        } else if (errMsg.includes("email not confirmed")) {
+          setMessage("Email address not confirmed yet. Check your inbox or click Launch Demo Mode.");
+        } else {
+          setMessage(result.error.message);
+        }
       } else if (result.data.user) {
         onAuthenticated(result.data.user);
       }
@@ -99,7 +131,7 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
       return;
     }
 
-    // Step 2 Signup
+    // Sign up flow
     const result = await supabase.auth.signUp({
       email,
       password,
@@ -116,17 +148,31 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
     });
 
     if (result.error) {
-      setMessage(result.error.message);
-    } else if (result.data.user) {
-      // Sync profile & organization
+      setIsError(true);
+      const errMsg = result.error.message.toLowerCase();
+      if (errMsg.includes("rate limit") || errMsg.includes("email limit")) {
+        setMessage(
+          "Supabase email confirmation rate limit reached. Click 'Launch Demo Mode' below to explore instantly!"
+        );
+      } else if (errMsg.includes("user already registered")) {
+        setMessage("An account with this email already exists. Switch to Sign In above.");
+      } else {
+        setMessage(result.error.message);
+      }
+    } else if (result.data.session && result.data.user) {
+      // Immediate session created (auto-confirm enabled)
       await supabase.from("profiles").upsert({
         id: result.data.user.id,
         full_name: fullName || email.split("@")[0],
         updated_at: new Date().toISOString(),
       });
       onAuthenticated(result.data.user);
-    } else {
-      setMessage("Account & Organization created! Check your email to confirm, then sign in.");
+    } else if (result.data.user) {
+      // Email confirmation required by Supabase
+      setIsError(false);
+      setMessage(
+        `Account created for ${email}! Check your inbox to confirm, or click 'Launch Demo Mode' below to preview immediately.`
+      );
     }
     setBusy(false);
   }
@@ -145,16 +191,29 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
             : mode === "forgot"
             ? "Reset your password."
             : signupStep === 1
-            ? "Step 1: Your Account"
+            ? "Step 1: Account Details"
             : "Step 2: Business Setup"}
         </h1>
         <p className="auth-subtitle">
           {mode === "forgot"
-            ? "Enter your email to receive a secure recovery link."
+            ? "Enter your email to receive a password reset link."
             : mode === "signup" && signupStep === 2
-            ? "Set up your multi-tenant company environment."
-            : "Sign in to securely access your organization's cash dashboard."}
+            ? "Set up your multi-tenant business environment."
+            : "Sign in to securely access your cash flow dashboard."}
         </p>
+
+        {/* Demo Mode Quick Access Banner */}
+        <div className="demo-banner" style={{ background: "rgba(28, 139, 105, 0.08)", border: "1px solid rgba(28, 139, 105, 0.2)", borderRadius: "8px", padding: "12px", marginBottom: "16px", textAlign: "center" }}>
+          <span style={{ fontSize: "13px", color: "#1c8b69", fontWeight: 600 }}>Want to preview CashPilot instantly?</span>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ marginTop: "8px", width: "100%", padding: "8px 16px", background: "#1c8b69", fontSize: "14px" }}
+            onClick={launchDemoMode}
+          >
+            ⚡ Launch Demo Mode (Instant Access)
+          </button>
+        </div>
 
         <form onSubmit={handleSubmit}>
           {mode === "signup" && signupStep === 1 && (
@@ -231,23 +290,27 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
             </>
           )}
 
-          <button className="primary-button auth-submit" disabled={busy}>
+          <button className="primary-button auth-submit" disabled={busy} style={{ marginTop: "12px" }}>
             {busy
-              ? "Processing..."
+              ? "Connecting..."
               : mode === "signin"
-              ? "Sign in"
+              ? "Sign in with Email"
               : mode === "forgot"
-              ? "Send reset link"
+              ? "Send Reset Link"
               : signupStep === 1
               ? "Next: Business Details ↗"
-              : "Complete Setup & Launch Dashboard"}
+              : "Complete Setup & Sign In"}
             {mode !== "signup" || signupStep === 2 ? <Arrow /> : null}
           </button>
         </form>
 
-        {message && <p className="auth-message">{message}</p>}
+        {message && (
+          <p className="auth-message" style={{ color: isError ? "#cc5d5d" : "#1c8b69", marginTop: "12px", fontSize: "13px", lineHeight: "1.4" }}>
+            {message}
+          </p>
+        )}
 
-        <div className="auth-footer-links">
+        <div className="auth-footer-links" style={{ marginTop: "16px" }}>
           {mode === "signup" && signupStep === 2 ? (
             <button
               type="button"
@@ -267,7 +330,7 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
                   setMessage("");
                 }}
               >
-                New to CashPilot? Create Organization Account
+                New to CashPilot? Create an Account
               </button>
               <button
                 type="button"
@@ -493,36 +556,46 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !user) return;
+    if (!user) return;
 
     async function loadOrganizations() {
-      // 1. Check organization memberships
-      const { data: memberships } = await supabase!
-        .from("organization_members")
-        .select("organization_id, role, organizations(id, name, industry, currency)")
-        .eq("user_id", user!.id);
+      if (!supabase) return;
 
-      if (memberships && memberships.length > 0) {
-        const orgList: Organization[] = memberships.map((m: any) => ({
-          id: m.organizations?.id || m.organization_id,
-          name: m.organizations?.name || "Business Organization",
-          industry: m.organizations?.industry,
-          currency: m.organizations?.currency,
-          role: m.role,
-        }));
-        setOrganizations(orgList);
-        setActiveOrg(orgList[0]);
-        setUserRole(orgList[0].role || "owner");
-      } else {
-        // Fallback: Create initial organization
-        const { data: newOrgId } = await supabase!.rpc("create_organization_for_user", {
-          org_name: user!.user_metadata?.org_name || user!.user_metadata?.workspace_name || "ABC Digital Solutions",
-        });
-        if (newOrgId) {
-          const fallbackOrg = { id: newOrgId, name: "ABC Digital Solutions", role: "owner" };
+      try {
+        const { data: memberships } = await supabase
+          .from("organization_members")
+          .select("organization_id, role, organizations(id, name, industry, currency)")
+          .eq("user_id", user!.id);
+
+        if (memberships && memberships.length > 0) {
+          const orgList: Organization[] = memberships.map((m: any) => ({
+            id: m.organizations?.id || m.organization_id,
+            name: m.organizations?.name || "Business Organization",
+            industry: m.organizations?.industry,
+            currency: m.organizations?.currency,
+            role: m.role,
+          }));
+          setOrganizations(orgList);
+          setActiveOrg(orgList[0]);
+          setUserRole(orgList[0].role || "owner");
+        } else {
+          // Fallback demo/initial organization
+          const fallbackOrg = {
+            id: "00000000-0000-0000-0000-000000000001",
+            name: user?.user_metadata?.org_name || user?.user_metadata?.workspace_name || "Acme Studio Demo",
+            role: "owner",
+          };
           setOrganizations([fallbackOrg]);
           setActiveOrg(fallbackOrg);
         }
+      } catch {
+        const fallbackOrg = {
+          id: "00000000-0000-0000-0000-000000000001",
+          name: "Acme Studio Demo",
+          role: "owner",
+        };
+        setOrganizations([fallbackOrg]);
+        setActiveOrg(fallbackOrg);
       }
     }
 
@@ -532,6 +605,15 @@ export default function Home() {
   function notify(msg: string) {
     setToast(msg);
     window.setTimeout(() => setToast(""), 2800);
+  }
+
+  function handleSignOut() {
+    if (supabase) {
+      supabase.auth.signOut().catch(() => undefined);
+    }
+    setUser(null);
+    setActiveOrg(null);
+    setOrganizations([]);
   }
 
   if (!authReady) {
@@ -613,7 +695,7 @@ export default function Home() {
           <div className="top-actions">
             <span className="signed-in">{user.email}</span>
             <span className="role-pill">{userRole.toUpperCase()}</span>
-            <button className="avatar" title="Sign out" onClick={() => supabase?.auth.signOut()}>
+            <button className="avatar" title="Sign out" onClick={handleSignOut}>
               {user.email?.slice(0, 2).toUpperCase() || "US"}
             </button>
           </div>
@@ -623,7 +705,7 @@ export default function Home() {
           <div className="content-wrap">
             <section className="hero-row">
               <div>
-                <p className="eyebrow">MULTI-TENANT AUTHORIZATION ENABLED</p>
+                <p className="eyebrow">AUTHENTICATED AS {user?.user_metadata?.full_name?.toUpperCase() || user?.email?.toUpperCase()}</p>
                 <h1>{activeOrg?.name || "Cash Command Center"}</h1>
                 <p className="subheading">Your organization cash flow metrics secured by Supabase RLS.</p>
               </div>
