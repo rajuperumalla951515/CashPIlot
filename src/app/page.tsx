@@ -116,14 +116,7 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
       const result = await supabase.auth.signInWithPassword({ email, password });
       if (result.error) {
         setIsError(true);
-        const errMsg = result.error.message.toLowerCase();
-        if (errMsg.includes("invalid login credentials")) {
-          setMessage("Invalid email or password. Please check your credentials or click Launch Demo Mode below.");
-        } else if (errMsg.includes("email not confirmed")) {
-          setMessage("Email address not confirmed yet. Check your inbox or click Launch Demo Mode.");
-        } else {
-          setMessage(result.error.message);
-        }
+        setMessage(result.error.message);
       } else if (result.data.user) {
         onAuthenticated(result.data.user);
       }
@@ -149,16 +142,7 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
 
     if (result.error) {
       setIsError(true);
-      const errMsg = result.error.message.toLowerCase();
-      if (errMsg.includes("rate limit") || errMsg.includes("email limit")) {
-        setMessage(
-          "Supabase email confirmation rate limit reached. Click 'Launch Demo Mode' below to explore instantly!"
-        );
-      } else if (errMsg.includes("user already registered")) {
-        setMessage("An account with this email already exists. Switch to Sign In above.");
-      } else {
-        setMessage(result.error.message);
-      }
+      setMessage(result.error.message);
     } else if (result.data.session && result.data.user) {
       // Immediate session created (auto-confirm enabled)
       await supabase.from("profiles").upsert({
@@ -170,9 +154,7 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
     } else if (result.data.user) {
       // Email confirmation required by Supabase
       setIsError(false);
-      setMessage(
-        `Account created for ${email}! Check your inbox to confirm, or click 'Launch Demo Mode' below to preview immediately.`
-      );
+      setMessage(`Account created for ${email}! Please check your email to confirm your account.`);
     }
     setBusy(false);
   }
