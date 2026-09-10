@@ -4,6 +4,15 @@
 
 create extension if not exists pgcrypto;
 
+create table if not exists public.cashpilot_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  full_name text,
+  avatar_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.cashpilot_workspaces (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -151,6 +160,7 @@ begin
 end;
 $$;
 
+alter table public.cashpilot_profiles enable row level security;
 alter table public.cashpilot_workspaces enable row level security;
 alter table public.cashpilot_workspace_members enable row level security;
 alter table public.cashpilot_customers enable row level security;
@@ -161,10 +171,44 @@ alter table public.cashpilot_documents enable row level security;
 alter table public.cashpilot_scenarios enable row level security;
 alter table public.cashpilot_notifications enable row level security;
 
+drop policy if exists users_manage_own_profile on public.cashpilot_profiles;
+create policy users_manage_own_profile on public.cashpilot_profiles for all to authenticated using (id = auth.uid()) with check (id = auth.uid());
+
 drop policy if exists workspace_members_can_read_workspace on public.cashpilot_workspaces;
 create policy workspace_members_can_read_workspace on public.cashpilot_workspaces for select to authenticated using (public.cashpilot_is_member(id));
 drop policy if exists users_can_read_own_memberships on public.cashpilot_workspace_members;
 create policy users_can_read_own_memberships on public.cashpilot_workspace_members for select to authenticated using (user_id = auth.uid());
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  ws_id uuid;
+  ws_name text;
+begin
+  insert into public.cashpilot_profiles (id, email, full_name)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
+  )
+  on conflict (id) do update set
+    email = excluded.email,
+    updated_at = now();
+
+  ws_name := coalesce(new.raw_user_meta_data->>'workspace_name', 'My CashPilot Workspace');
+  insert into public.cashpilot_workspaces (name) values (ws_name) returning id into ws_id;
+  insert into public.cashpilot_workspace_members (workspace_id, user_id, role)
+  values (ws_id, new.id, 'owner')
+  on conflict do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
 
 drop policy if exists workspace_members_manage_customers on public.cashpilot_customers;
 create policy workspace_members_manage_customers on public.cashpilot_customers for all to authenticated using (public.cashpilot_is_member(workspace_id)) with check (public.cashpilot_is_member(workspace_id));

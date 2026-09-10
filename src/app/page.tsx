@@ -27,9 +27,10 @@ const customers = [
 function Arrow() { return <span aria-hidden="true">↗</span>; }
 
 function AuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
   const [workspaceName, setWorkspaceName] = useState("Acme Studio");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -39,16 +40,172 @@ function AuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => void 
     if (!supabase) { setMessage("Supabase environment variables are missing."); return; }
     setBusy(true);
     setMessage("");
+
+    if (mode === "forgot") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+      });
+      if (error) setMessage(error.message);
+      else setMessage("Password reset email sent! Check your inbox.");
+      setBusy(false);
+      return;
+    }
+
     const result = mode === "signin"
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password, options: { data: { workspace_name: workspaceName } } });
-    if (result.error) setMessage(result.error.message);
-    else if (result.data.user) onAuthenticated(result.data.user);
-    else setMessage("Check your email to confirm your account, then sign in.");
+      : await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName || splitEmail(email),
+              workspace_name: workspaceName || "My CashPilot Workspace",
+            },
+          },
+        });
+
+    if (result.error) {
+      setMessage(result.error.message);
+    } else if (result.data.user) {
+      // Sync profile table in database if user signed in
+      await supabase.from("cashpilot_profiles").upsert({
+        id: result.data.user.id,
+        email: result.data.user.email ?? email,
+        full_name: fullName || result.data.user.user_metadata?.full_name || splitEmail(email),
+        updated_at: new Date().toISOString(),
+      });
+      onAuthenticated(result.data.user);
+    } else {
+      setMessage("Account created! Check your email to confirm your account, then sign in.");
+    }
     setBusy(false);
   }
 
-  return <main className="auth-shell"><div className="auth-card"><div className="brand auth-brand"><span className="brand-mark">+</span><span>cashpilot</span></div><p className="eyebrow">YOUR AI CFO FOR CASH FLOW</p><h1>{mode === "signin" ? "Welcome back." : "Start your cash command center."}</h1><p className="auth-subtitle">Sign in to securely access your workspace data.</p><form onSubmit={submit}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@company.com" /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required placeholder="At least 6 characters" /></label>{mode === "signup" && <label>Workspace name<input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} required /></label>}<button className="primary-button auth-submit" disabled={busy}>{busy ? "Connecting..." : mode === "signin" ? "Sign in" : "Create workspace"}<Arrow /></button></form>{message && <p className="auth-message">{message}</p>}<button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setMessage(""); }}>{mode === "signin" ? "New to CashPilot? Create an account" : "Already have an account? Sign in"}</button></div></main>;
+  function splitEmail(val: string) {
+    return val.split("@")[0] || "User";
+  }
+
+  return (
+    <main className="auth-shell">
+      <div className="auth-card">
+        <div className="brand auth-brand">
+          <span className="brand-mark">+</span>
+          <span>cashpilot</span>
+        </div>
+        <p className="eyebrow">YOUR AI CFO FOR CASH FLOW</p>
+        <h1>
+          {mode === "signin"
+            ? "Welcome back."
+            : mode === "signup"
+            ? "Start your cash command center."
+            : "Reset your password."}
+        </h1>
+        <p className="auth-subtitle">
+          {mode === "forgot"
+            ? "Enter your email address and we'll send you a password reset link."
+            : "Sign in to securely access your workspace data."}
+        </p>
+        <form onSubmit={submit}>
+          {mode === "signup" && (
+            <label>
+              Full name
+              <input
+                type="text"
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                required
+                placeholder="Rahul Sharma"
+              />
+            </label>
+          )}
+          <label>
+            Email address
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              placeholder="you@company.com"
+            />
+          </label>
+          {mode !== "forgot" && (
+            <label>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                minLength={6}
+                required
+                placeholder="At least 6 characters"
+              />
+            </label>
+          )}
+          {mode === "signup" && (
+            <label>
+              Workspace name
+              <input
+                value={workspaceName}
+                onChange={(event) => setWorkspaceName(event.target.value)}
+                required
+                placeholder="Acme Studio"
+              />
+            </label>
+          )}
+          <button className="primary-button auth-submit" disabled={busy}>
+            {busy
+              ? "Connecting..."
+              : mode === "signin"
+              ? "Sign in"
+              : mode === "signup"
+              ? "Create account & workspace"
+              : "Send reset email"}
+            <Arrow />
+          </button>
+        </form>
+
+        {message && <p className="auth-message">{message}</p>}
+
+        <div className="auth-footer-links">
+          {mode === "signin" ? (
+            <>
+              <button
+                type="button"
+                className="auth-switch"
+                onClick={() => {
+                  setMode("signup");
+                  setMessage("");
+                }}
+              >
+                New to CashPilot? Create an account
+              </button>
+              <button
+                type="button"
+                className="auth-switch text-subtle"
+                onClick={() => {
+                  setMode("forgot");
+                  setMessage("");
+                }}
+              >
+                Forgot your password?
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="auth-switch"
+              onClick={() => {
+                setMode("signin");
+                setMessage("");
+              }}
+            >
+              Already have an account? Sign in
+            </button>
+          )}
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function WorkspaceView({ view, notify, customers: databaseCustomers, workspaceId }: { view: string; notify: (message: string) => void; customers: typeof customers; workspaceId: string | null }) {
