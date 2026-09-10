@@ -45,57 +45,29 @@ function Arrow() {
   return <span aria-hidden="true">↗</span>;
 }
 
-// Demo user object for instant access preview
-const DEMO_USER: User = {
-  id: "00000000-0000-0000-0000-000000000001",
-  app_metadata: { provider: "email" },
-  user_metadata: { full_name: "Rahul Sharma (Demo CFO)", org_name: "Acme Studio Demo" },
-  aud: "authenticated",
-  created_at: new Date().toISOString(),
-  email: "demo@cashpilot.app",
-};
-
-function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
+function SmartAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
-  const [signupStep, setSignupStep] = useState<1 | 2>(1);
-
-  // Step 1: User Account
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
-
-  // Step 2: Organization / Business details
   const [orgName, setOrgName] = useState("ABC Digital Solutions");
-  const [industry, setIndustry] = useState("IT Services");
-  const [currency, setCurrency] = useState("INR");
-  const [timezone, setTimezone] = useState("Asia/Kolkata");
 
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  function launchDemoMode() {
-    onAuthenticated(DEMO_USER);
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase) {
-      setMessage("Supabase environment is initializing...");
+      setMessage("Initializing database connection...");
       setIsError(true);
       return;
     }
     setMessage("");
     setIsError(false);
-
-    if (mode === "signup" && signupStep === 1) {
-      setSignupStep(2);
-      return;
-    }
-
     setBusy(true);
 
-    // Forgot password flow
+    // Forgot password mode
     if (mode === "forgot") {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
@@ -105,28 +77,81 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
         setMessage(error.message);
       } else {
         setIsError(false);
-        setMessage("Password reset link sent! Check your email inbox.");
+        setMessage("Password reset link sent! Check your inbox.");
       }
       setBusy(false);
       return;
     }
 
-    // Sign in flow
+    // Explicit Sign In Mode
     if (mode === "signin") {
-      const result = await supabase.auth.signInWithPassword({ email, password });
-      if (result.error) {
-        setIsError(true);
-        setMessage(result.error.message);
-      } else if (result.data.user) {
-        onAuthenticated(result.data.user);
+      const signInResult = await supabase.auth.signInWithPassword({ email, password });
+      
+      if (signInResult.data.user) {
+        onAuthenticated(signInResult.data.user);
+        setBusy(false);
+        return;
       }
+
+      // Check if user doesn't exist -> Attempt automatic registration
+      const errText = signInResult.error?.message.toLowerCase() || "";
+      if (errText.includes("invalid login credentials")) {
+        // Try auto sign-up
+        const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
+        const signUpResult = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: redirectUrl,
+            data: {
+              full_name: fullName || email.split("@")[0],
+              org_name: orgName,
+              workspace_name: orgName,
+            },
+          },
+        });
+
+        if (signUpResult.data.user) {
+          // Sync database profile
+          await supabase.from("profiles").upsert({
+            id: signUpResult.data.user.id,
+            full_name: fullName || email.split("@")[0],
+            updated_at: new Date().toISOString(),
+          });
+
+          if (signUpResult.data.session) {
+            onAuthenticated(signUpResult.data.user);
+            setBusy(false);
+            return;
+          }
+
+          // Try signing in immediately
+          const autoLogin = await supabase.auth.signInWithPassword({ email, password });
+          if (autoLogin.data.user) {
+            onAuthenticated(autoLogin.data.user);
+            setBusy(false);
+            return;
+          }
+        }
+
+        // If user already existed but password was wrong
+        if (signUpResult.error?.message.toLowerCase().includes("user already registered")) {
+          setIsError(true);
+          setMessage("Invalid email or password. Please check your credentials.");
+          setBusy(false);
+          return;
+        }
+      }
+
+      setIsError(true);
+      setMessage(signInResult.error?.message || "Authentication failed. Check your email and password.");
       setBusy(false);
       return;
     }
 
-    // Sign up flow
+    // Explicit Sign Up Mode
     const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-    const result = await supabase.auth.signUp({
+    const signUpResult = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -135,34 +160,29 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
           full_name: fullName || email.split("@")[0],
           org_name: orgName,
           workspace_name: orgName,
-          industry,
-          currency,
-          timezone,
         },
       },
     });
 
-    if (result.error) {
+    if (signUpResult.error) {
       setIsError(true);
-      setMessage(result.error.message);
-    } else if (result.data.user) {
-      // Create user profile
+      setMessage(signUpResult.error.message);
+    } else if (signUpResult.data.user) {
       await supabase.from("profiles").upsert({
-        id: result.data.user.id,
+        id: signUpResult.data.user.id,
         full_name: fullName || email.split("@")[0],
         updated_at: new Date().toISOString(),
       });
 
-      if (result.data.session) {
-        onAuthenticated(result.data.user);
+      if (signUpResult.data.session) {
+        onAuthenticated(signUpResult.data.user);
       } else {
-        // Try instant sign in
         const autoLogin = await supabase.auth.signInWithPassword({ email, password });
         if (autoLogin.data.user) {
           onAuthenticated(autoLogin.data.user);
         } else {
           setIsError(false);
-          setMessage(`Account created for ${email}! You can now sign in or click Launch Demo Mode below.`);
+          setMessage(`Account created for ${email}! You can now sign in.`);
         }
       }
     }
@@ -179,36 +199,19 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
         <p className="eyebrow">YOUR AI CFO FOR CASH FLOW</p>
         <h1>
           {mode === "signin"
-            ? "Welcome back."
+            ? "Sign in to CashPilot."
             : mode === "forgot"
             ? "Reset your password."
-            : signupStep === 1
-            ? "Step 1: Account Details"
-            : "Step 2: Business Setup"}
+            : "Create your account & workspace."}
         </h1>
         <p className="auth-subtitle">
           {mode === "forgot"
-            ? "Enter your email to receive a password reset link."
-            : mode === "signup" && signupStep === 2
-            ? "Set up your multi-tenant business environment."
-            : "Sign in to securely access your cash flow dashboard."}
+            ? "Enter your email address to receive a password reset link."
+            : "Access your company's cash command center."}
         </p>
 
-        {/* Demo Mode Quick Access Banner */}
-        <div className="demo-banner" style={{ background: "rgba(28, 139, 105, 0.08)", border: "1px solid rgba(28, 139, 105, 0.2)", borderRadius: "8px", padding: "12px", marginBottom: "16px", textAlign: "center" }}>
-          <span style={{ fontSize: "13px", color: "#1c8b69", fontWeight: 600 }}>Want to preview CashPilot instantly?</span>
-          <button
-            type="button"
-            className="primary-button"
-            style={{ marginTop: "8px", width: "100%", padding: "8px 16px", background: "#1c8b69", fontSize: "14px" }}
-            onClick={launchDemoMode}
-          >
-            ⚡ Launch Demo Mode (Instant Access)
-          </button>
-        </div>
-
         <form onSubmit={handleSubmit}>
-          {mode === "signup" && signupStep === 1 && (
+          {mode === "signup" && (
             <label>
               Full Name
               <input
@@ -221,20 +224,18 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
             </label>
           )}
 
-          {mode !== "signup" || signupStep === 1 ? (
-            <label>
-              Email Address
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="you@company.com"
-              />
-            </label>
-          ) : null}
+          <label>
+            Email Address
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="you@company.com"
+            />
+          </label>
 
-          {mode !== "forgot" && (mode !== "signup" || signupStep === 1) ? (
+          {mode !== "forgot" && (
             <label>
               Password
               <input
@@ -246,53 +247,30 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
                 placeholder="At least 6 characters"
               />
             </label>
-          ) : null}
+          )}
 
-          {mode === "signup" && signupStep === 2 && (
-            <>
-              <label>
-                Company / Organization Name
-                <input
-                  type="text"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  required
-                  placeholder="ABC Digital Solutions"
-                />
-              </label>
-              <label>
-                Industry
-                <select value={industry} onChange={(e) => setIndustry(e.target.value)}>
-                  <option value="IT Services">IT Services / Tech Agency</option>
-                  <option value="SaaS">SaaS / Software</option>
-                  <option value="Manufacturing">Manufacturing & Goods</option>
-                  <option value="Retail">Retail & E-commerce</option>
-                  <option value="Consulting">Consulting & Services</option>
-                </select>
-              </label>
-              <label>
-                Operating Currency
-                <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                  <option value="INR">INR (₹)</option>
-                  <option value="USD">USD ($)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="GBP">GBP (£)</option>
-                </select>
-              </label>
-            </>
+          {mode === "signup" && (
+            <label>
+              Company / Business Name
+              <input
+                type="text"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                required
+                placeholder="ABC Digital Solutions"
+              />
+            </label>
           )}
 
           <button className="primary-button auth-submit" disabled={busy} style={{ marginTop: "12px" }}>
             {busy
-              ? "Connecting..."
+              ? "Authenticating..."
               : mode === "signin"
-              ? "Sign in with Email"
+              ? "Continue to Dashboard"
               : mode === "forgot"
               ? "Send Reset Link"
-              : signupStep === 1
-              ? "Next: Business Details ↗"
-              : "Complete Setup & Sign In"}
-            {mode !== "signup" || signupStep === 2 ? <Arrow /> : null}
+              : "Create Account & Workspace"}
+            <Arrow />
           </button>
         </form>
 
@@ -303,22 +281,13 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
         )}
 
         <div className="auth-footer-links" style={{ marginTop: "16px" }}>
-          {mode === "signup" && signupStep === 2 ? (
-            <button
-              type="button"
-              className="auth-switch"
-              onClick={() => setSignupStep(1)}
-            >
-              ← Back to Account Details
-            </button>
-          ) : mode === "signin" ? (
+          {mode === "signin" ? (
             <>
               <button
                 type="button"
                 className="auth-switch"
                 onClick={() => {
                   setMode("signup");
-                  setSignupStep(1);
                   setMessage("");
                 }}
               >
@@ -574,10 +543,13 @@ export default function Home() {
           setActiveOrg(orgList[0]);
           setUserRole(orgList[0].role || "owner");
         } else {
-          // Fallback demo/initial organization
+          // Fallback initial organization creation
+          const { data: newOrgId } = await supabase.rpc("create_organization_for_user", {
+            org_name: user?.user_metadata?.org_name || user?.user_metadata?.workspace_name || "ABC Digital Solutions",
+          });
           const fallbackOrg = {
-            id: "00000000-0000-0000-0000-000000000001",
-            name: user?.user_metadata?.org_name || user?.user_metadata?.workspace_name || "Acme Studio Demo",
+            id: newOrgId || "00000000-0000-0000-0000-000000000001",
+            name: user?.user_metadata?.org_name || user?.user_metadata?.workspace_name || "ABC Digital Solutions",
             role: "owner",
           };
           setOrganizations([fallbackOrg]);
@@ -586,7 +558,7 @@ export default function Home() {
       } catch {
         const fallbackOrg = {
           id: "00000000-0000-0000-0000-000000000001",
-          name: "Acme Studio Demo",
+          name: "ABC Digital Solutions",
           role: "owner",
         };
         setOrganizations([fallbackOrg]);
@@ -622,7 +594,7 @@ export default function Home() {
   }
 
   if (!user) {
-    return <MultiStepAuthPanel onAuthenticated={setUser} />;
+    return <SmartAuthPanel onAuthenticated={setUser} />;
   }
 
   return (
