@@ -145,18 +145,26 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
     if (result.error) {
       setIsError(true);
       setMessage(result.error.message);
-    } else if (result.data.session && result.data.user) {
-      // Immediate session created (auto-confirm enabled)
+    } else if (result.data.user) {
+      // Create user profile
       await supabase.from("profiles").upsert({
         id: result.data.user.id,
         full_name: fullName || email.split("@")[0],
         updated_at: new Date().toISOString(),
       });
-      onAuthenticated(result.data.user);
-    } else if (result.data.user) {
-      // Email confirmation required by Supabase
-      setIsError(false);
-      setMessage(`Account created for ${email}! Please check your email to confirm your account.`);
+
+      if (result.data.session) {
+        onAuthenticated(result.data.user);
+      } else {
+        // Try instant sign in
+        const autoLogin = await supabase.auth.signInWithPassword({ email, password });
+        if (autoLogin.data.user) {
+          onAuthenticated(autoLogin.data.user);
+        } else {
+          setIsError(false);
+          setMessage(`Account created for ${email}! You can now sign in or click Launch Demo Mode below.`);
+        }
+      }
     }
     setBusy(false);
   }
