@@ -125,10 +125,12 @@ function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User)
     }
 
     // Sign up flow
+    const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
     const result = await supabase.auth.signUp({
       email,
       password,
       options: {
+        emailRedirectTo: redirectUrl,
         data: {
           full_name: fullName || email.split("@")[0],
           org_name: orgName,
@@ -531,8 +533,11 @@ export default function Home() {
       setUser(data.session?.user ?? null);
       setAuthReady(true);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
+      if (event === "SIGNED_IN" && session?.user) {
+        notify(`Welcome back, ${session.user.user_metadata?.full_name || session.user.email}!`);
+      }
     });
     return () => listener.subscription.unsubscribe();
   }, []);
