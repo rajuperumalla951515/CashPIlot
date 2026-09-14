@@ -1,1607 +1,2247 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, useRef, type FormEvent } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { hasPermission, Permission, Role } from "@/lib/permissions";
 
-interface Organization {
-  id: string;
-  name: string;
-  industry?: string;
-  currency?: string;
-  role?: Role;
-}
+import {
+  IconOverview,
+  IconCashFlow,
+  IconInvoices,
+  IconCustomers,
+  IconPayments,
+  IconExpenses,
+  IconSuppliers,
+  IconCollections,
+  IconAnalytics,
+  IconAiCfo,
+  IconAlerts,
+  IconReports,
+  IconTeam,
+  IconSettings,
+  IconDatasets,
+  IconPlus,
+  IconDownload,
+  IconSend,
+  IconWarning,
+} from "./icons";
 
 interface PaymentPromise {
   id: string;
-  customerName: string;
-  amount: string;
-  promisedDate: string;
+  customer_name: string;
+  invoice_number?: string;
+  amount: number;
+  promised_date: string;
   status: "pending" | "kept" | "missed";
+  notes?: string;
 }
 
 interface Expense {
   id: string;
   category: string;
-  supplier: string;
-  amount: string;
-  numericAmount: number;
-  date: string;
-  status: string;
-  isUnusual?: boolean;
+  supplier_name: string;
+  amount: number;
+  expense_date: string;
+  payment_status: string;
+  is_unusual?: boolean;
+  is_recurring?: boolean;
+  notes?: string;
 }
 
 interface Supplier {
   id: string;
   name: string;
-  creditDays: number;
+  credit_days: number;
   score: number;
-  totalSpend: string;
-}
-
-interface TeamMember {
-  email: string;
-  role: Role;
-  status: "Active" | "Pending";
+  total_spend: number;
 }
 
 interface InvoiceItem {
   id: string;
-  customer: string;
-  amount: string;
-  numericAmount: number;
-  status: "Draft" | "Sent" | "Viewed" | "Paid" | "Overdue";
-  due: string;
-  dueDate: string;
+  invoice_number: string;
+  customer_name: string;
+  amount: number;
+  issued_date: string;
+  due_date: string;
+  status: "open" | "overdue" | "paid" | "draft" | "sent";
+  notes?: string;
 }
 
 interface CustomerItem {
-  initials: string;
+  id: string;
   name: string;
   email?: string;
-  invoice: string;
-  days: string;
-  score: number;
-  color: string;
-  outstanding: string;
-  numericOutstanding: number;
+  phone?: string;
+  payment_score: number;
+  outstanding_amount: number;
+  risk_level: string;
+  avg_payment_delay_days?: number;
+  expected_delay_range?: string;
+  late_probability?: number;
 }
 
-const initialCustomers: CustomerItem[] = [
-  { initials: "AC", name: "Acme Cloudworks", email: "billing@acmecloud.com", invoice: "INV-2841", days: "14 days overdue", score: 92, color: "#1c8b69", outstanding: "₹2,40,000", numericOutstanding: 240000 },
-  { initials: "NS", name: "Northstar Studio", email: "finance@northstar.io", invoice: "INV-2835", days: "9 days overdue", score: 61, color: "#db7438", outstanding: "₹1,42,000", numericOutstanding: 142000 },
-  { initials: "PB", name: "Pixel & Beam", email: "accounts@pixelbeam.design", invoice: "INV-2818", days: "Due in 2 days", score: 38, color: "#cc5d5d", outstanding: "₹64,500", numericOutstanding: 64500 },
-];
-
-const initialInvoices: InvoiceItem[] = [
-  { id: "INV-2841", customer: "Acme Cloudworks", amount: "₹85,000", numericAmount: 85000, status: "Overdue", due: "14 days overdue", dueDate: "2026-08-27" },
-  { id: "INV-2835", customer: "Northstar Studio", amount: "₹1,42,000", numericAmount: 142000, status: "Sent", due: "Due in 3 days", dueDate: "2026-09-13" },
-  { id: "INV-2818", customer: "Pixel & Beam", amount: "₹64,500", numericAmount: 64500, status: "Viewed", due: "Due in 6 days", dueDate: "2026-09-16" },
-];
-
-function Arrow() {
-  return <span aria-hidden="true">↗</span>;
+interface SavedDataset {
+  id: string;
+  name: string;
+  filename: string;
+  description?: string;
+  invoice_count: number;
+  customer_count: number;
+  expense_count: number;
+  created_at: string;
 }
 
-// 5-Step Onboarding Component
-function OnboardingWizard({
-  user,
-  onComplete,
-}: {
-  user: User;
-  onComplete: (org: Organization) => void;
-}) {
-  const [step, setStep] = useState<3 | 4 | 5>(3);
+interface ChatMessage {
+  id: string;
+  sender: "user" | "cfo";
+  text: string;
+  time: string;
+}
 
-  // Step 3: Business Setup
-  const [businessName, setBusinessName] = useState("ABC Digital Solutions");
-  const [industry, setIndustry] = useState("IT Services");
-  const [country, setCountry] = useState("India");
-  const [currency, setCurrency] = useState("INR");
-  const [timezone, setTimezone] = useState("Asia/Kolkata");
-  const [companySize, setCompanySize] = useState("25 Employees");
+function FormattedResponse({ content }: { content: string }) {
+  if (!content) return null;
 
-  // Step 5: Preferences
-  const [managementTool, setManagementTool] = useState("Excel");
-  const [startPreference, setStartPreference] = useState("manual");
-
-  const [busy, setBusy] = useState(false);
-
-  async function handleFinish(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-
-    if (supabase) {
-      const { data: orgId } = await supabase.rpc("create_organization_for_user", {
-        org_name: businessName,
-        org_industry: industry,
-        org_currency: currency,
-        org_timezone: timezone,
-      });
-
-      const newOrg: Organization = {
-        id: orgId || "00000000-0000-0000-0000-000000000001",
-        name: businessName,
-        industry,
-        currency,
-        role: "owner",
-      };
-      setBusy(false);
-      onComplete(newOrg);
-    } else {
-      onComplete({
-        id: "00000000-0000-0000-0000-000000000001",
-        name: businessName,
-        role: "owner",
-      });
-    }
-  }
-
+  const lines = content.split("\n");
   return (
-    <main className="auth-shell">
-      <div className="auth-card" style={{ maxWidth: "560px" }}>
-        <div className="brand auth-brand">
-          <span className="brand-mark">+</span>
-          <span>cashpilot</span>
-        </div>
-        <p className="eyebrow">STEP {step} OF 5 · BUSINESS ONBOARDING</p>
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "14px", lineHeight: "1.6", color: "var(--ink)" }}>
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={idx} style={{ height: "4px" }} />;
 
-        {step === 3 && (
-          <div>
-            <h1>Tell us about your business</h1>
-            <p className="auth-subtitle">Set up your organization parameters for accurate cash forecasting.</p>
-            <form onSubmit={(e) => { e.preventDefault(); setStep(4); }}>
-              <label>
-                Business Name
-                <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} required />
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <label>
-                  Industry
-                  <select value={industry} onChange={(e) => setIndustry(e.target.value)}>
-                    <option value="IT Services">IT Services / Agency</option>
-                    <option value="SaaS">SaaS / Software</option>
-                    <option value="Manufacturing">Manufacturing</option>
-                    <option value="Consulting">Consulting</option>
-                  </select>
-                </label>
-                <label>
-                  Country
-                  <select value={country} onChange={(e) => setCountry(e.target.value)}>
-                    <option value="India">India</option>
-                    <option value="United States">United States</option>
-                    <option value="United Kingdom">United Kingdom</option>
-                  </select>
-                </label>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <label>
-                  Operating Currency
-                  <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                    <option value="INR">INR (₹)</option>
-                    <option value="USD">USD ($)</option>
-                    <option value="EUR">EUR (€)</option>
-                  </select>
-                </label>
-                <label>
-                  Company Size
-                  <select value={companySize} onChange={(e) => setCompanySize(e.target.value)}>
-                    <option value="1-10 Employees">1-10 Employees</option>
-                    <option value="25 Employees">25 Employees</option>
-                    <option value="50+ Employees">50+ Employees</option>
-                  </select>
-                </label>
-              </div>
-              <button type="submit" className="primary-button" style={{ marginTop: "16px", width: "100%" }}>
-                Continue to Organization Setup <Arrow />
-              </button>
-            </form>
-          </div>
-        )}
-
-        {step === 4 && (
-          <div>
-            <h1>Organization Ready!</h1>
-            <p className="auth-subtitle">
-              Creating <strong>{businessName}</strong> with <strong>Owner</strong> privileges for {user.email}.
-            </p>
-            <div style={{ padding: "16px", background: "rgba(28, 139, 105, 0.08)", borderRadius: "8px", margin: "16px 0" }}>
-              <p style={{ margin: 0, fontSize: "14px", color: "#1c8b69" }}>
-                ✓ Database Row Level Security (RLS) Enabled
-                <br />✓ Default 6-tier RBAC Role Matrix Configured
-                <br />✓ Multi-tenant Organization ID Provisioned
-              </p>
-            </div>
-            <button className="primary-button" style={{ width: "100%" }} onClick={() => setStep(5)}>
-              Set Financial Preferences <Arrow />
-            </button>
-          </div>
-        )}
-
-        {step === 5 && (
-          <div>
-            <h1>How do you manage finances?</h1>
-            <p className="auth-subtitle">Help CashPilot tailor your initial AI CFO recommendations.</p>
-            <form onSubmit={handleFinish}>
-              <label>
-                How do you currently manage finances?
-                <select value={managementTool} onChange={(e) => setManagementTool(e.target.value)}>
-                  <option value="Excel">Excel / Spreadsheets</option>
-                  <option value="Tally">Tally Prime</option>
-                  <option value="Zoho">Zoho Books</option>
-                  <option value="Manually">Manually / Offline Registers</option>
-                </select>
-              </label>
-
-              <label style={{ marginTop: "12px" }}>
-                How do you want to start?
-                <select value={startPreference} onChange={(e) => setStartPreference(e.target.value)}>
-                  <option value="manual">Enter / Manage Data Manually</option>
-                  <option value="csv">Import CSV File</option>
-                  <option value="api">Connect Accounting Software</option>
-                </select>
-              </label>
-
-              <button className="primary-button" disabled={busy} style={{ width: "100%", marginTop: "20px" }}>
-                {busy ? "Launching..." : "Launch Cash Command Center"} <Arrow />
-              </button>
-            </form>
-          </div>
-        )}
-      </div>
-    </main>
-  );
-}
-
-// Previous Method: Multi-Step / Tabbed Auth Panel (Sign In, Multi-Step Sign Up, Forgot Password)
-function MultiStepAuthPanel({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
-  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
-  const [signUpStep, setSignUpStep] = useState<1 | 2>(1);
-
-  // Common credentials
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-
-  // Business registration details
-  const [companyName, setCompanyName] = useState("");
-  const [industry, setIndustry] = useState("IT Services");
-  const [currency, setCurrency] = useState("INR");
-  const [companySize, setCompanySize] = useState("10-50 Employees");
-
-  // Status feedback
-  const [message, setMessage] = useState("");
-  const [isError, setIsError] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  // Clear errors when switching mode
-  function switchMode(newMode: "signin" | "signup" | "forgot") {
-    setMode(newMode);
-    setSignUpStep(1);
-    setMessage("");
-    setIsError(false);
-  }
-
-  // Handle explicit Sign In
-  async function handleSignIn(e: FormEvent) {
-    e.preventDefault();
-    if (!supabase) return;
-    setBusy(true);
-    setMessage("");
-
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (data?.user) {
-      onAuthenticated(data.user);
-    } else {
-      setIsError(true);
-      setMessage(error?.message || "Invalid email or password. Please check your credentials.");
-    }
-    setBusy(false);
-  }
-
-  // Handle Multi-Step Registration
-  async function handleSignUp(e: FormEvent) {
-    e.preventDefault();
-    if (!supabase) return;
-
-    if (signUpStep === 1) {
-      if (password.length < 6) {
-        setIsError(true);
-        setMessage("Password must be at least 6 characters long.");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setIsError(true);
-        setMessage("Passwords do not match. Please re-enter.");
-        return;
-      }
-      setIsError(false);
-      setMessage("");
-      setSignUpStep(2);
-      return;
-    }
-
-    // Step 2 Final Submission
-    setBusy(true);
-    setMessage("");
-
-    const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: {
-          full_name: fullName,
-          company_name: companyName,
-          industry: industry,
-        },
-      },
-    });
-
-    if (data?.user) {
-      if (data.session) {
-        onAuthenticated(data.user);
-      } else {
-        // Try auto sign-in if confirmed
-        const autoLogin = await supabase.auth.signInWithPassword({ email, password });
-        if (autoLogin.data.user) {
-          onAuthenticated(autoLogin.data.user);
-        } else {
-          setIsError(false);
-          setMessage(`Account successfully created for ${email}! Please sign in with your password.`);
-          setMode("signin");
+        if (trimmed.startsWith("###")) {
+          const title = trimmed.replace(/^###\s*\*{0,2}/, "").replace(/\*{0,2}$/, "");
+          return (
+            <h4 key={idx} style={{ margin: "12px 0 4px", fontSize: "15px", fontWeight: 800, color: "var(--ink)", letterSpacing: "-0.3px" }}>
+              {title}
+            </h4>
+          );
         }
-      }
-    } else {
-      setIsError(true);
-      setMessage(error?.message || "Registration failed. Please check your details or try signing in.");
-    }
-    setBusy(false);
-  }
 
-  // Handle Forgot Password
-  async function handleForgotPassword(e: FormEvent) {
-    e.preventDefault();
-    if (!supabase) return;
-    setBusy(true);
-    setMessage("");
+        const parts = line.split(/(\*\*.*?\*\*)/g);
+        const formattedLine = parts.map((part, pIdx) => {
+          if (part.startsWith("**") && part.endsWith("**")) {
+            return <strong key={pIdx} style={{ fontWeight: 800, color: "var(--ink)" }}>{part.slice(2, -2)}</strong>;
+          }
+          return part;
+        });
 
-    const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirectUrl });
+        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+          const listText = line.substring(2);
+          const listParts = listText.split(/(\*\*.*?\*\*)/g);
+          return (
+            <div key={idx} style={{ display: "flex", gap: "8px", paddingLeft: "6px" }}>
+              <span style={{ color: "var(--orange)", fontWeight: 800 }}>•</span>
+              <span>
+                {listParts.map((part, pIdx) =>
+                  part.startsWith("**") && part.endsWith("**") ? (
+                    <strong key={pIdx} style={{ fontWeight: 800 }}>{part.slice(2, -2)}</strong>
+                  ) : (
+                    part
+                  )
+                )}
+              </span>
+            </div>
+          );
+        }
 
-    if (error) {
-      setIsError(true);
-      setMessage(error.message);
-    } else {
-      setIsError(false);
-      setMessage(`Password reset link sent to ${email}. Please check your inbox.`);
-    }
-    setBusy(false);
-  }
-
-  return (
-    <main className="auth-shell">
-      <div className="auth-card" style={{ maxWidth: "460px" }}>
-        <div className="brand auth-brand">
-          <span className="brand-mark">+</span>
-          <span>cashpilot</span>
-        </div>
-        <p className="eyebrow">YOUR AI CFO FOR CASH FLOW</p>
-
-        {/* Auth Navigation Tabs */}
-        <div className="auth-tabs">
-          <button className={`auth-tab-btn ${mode === "signin" ? "active" : ""}`} onClick={() => switchMode("signin")}>
-            Sign In
-          </button>
-          <button className={`auth-tab-btn ${mode === "signup" ? "active" : ""}`} onClick={() => switchMode("signup")}>
-            Register Account
-          </button>
-          <button className={`auth-tab-btn ${mode === "forgot" ? "active" : ""}`} onClick={() => switchMode("forgot")}>
-            Forgot Password
-          </button>
-        </div>
-
-        {/* 1. SIGN IN FORM */}
-        {mode === "signin" && (
-          <form onSubmit={handleSignIn}>
-            <h1>Sign in to CashPilot</h1>
-            <p className="auth-subtitle">Access your multi-tenant financial command center.</p>
-
-            <label>
-              Work Email Address
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" />
-            </label>
-            <label>
-              Password
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="••••••••" />
-            </label>
-            <button className="primary-button auth-submit" disabled={busy} style={{ marginTop: "8px", width: "100%" }}>
-              {busy ? "Authenticating..." : "Sign In to CashPilot"} <Arrow />
-            </button>
-          </form>
-        )}
-
-        {/* 2. MULTI-STEP SIGN UP FORM */}
-        {mode === "signup" && (
-          <form onSubmit={handleSignUp}>
-            <h1>{signUpStep === 1 ? "Create your account" : "Set up your business"}</h1>
-            <p className="auth-subtitle">
-              {signUpStep === 1 ? "Step 1 of 2 · Enter user credentials" : `Step 2 of 2 · Business parameters for ${email}`}
-            </p>
-
-            {signUpStep === 1 ? (
-              <>
-                <label>
-                  Full Name
-                  <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} required placeholder="Raju Sharma" />
-                </label>
-                <label>
-                  Work Email
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" />
-                </label>
-                <label>
-                  Password (min 6 characters)
-                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} required placeholder="••••••••" />
-                </label>
-                <label>
-                  Confirm Password
-                  <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} minLength={6} required placeholder="••••••••" />
-                </label>
-                <button className="primary-button auth-submit" type="submit" style={{ marginTop: "8px", width: "100%" }}>
-                  Next: Business Setup <Arrow />
-                </button>
-              </>
-            ) : (
-              <>
-                <label>
-                  Business / Company Name
-                  <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} required placeholder="Acme Technologies Ltd" />
-                </label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <label>
-                    Industry
-                    <select value={industry} onChange={(e) => setIndustry(e.target.value)}>
-                      <option value="IT Services">IT Services / Agency</option>
-                      <option value="SaaS">SaaS / Software</option>
-                      <option value="Manufacturing">Manufacturing</option>
-                      <option value="Consulting">Consulting</option>
-                      <option value="Retail">Retail / E-Commerce</option>
-                    </select>
-                  </label>
-                  <label>
-                    Currency
-                    <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                      <option value="INR">INR (₹)</option>
-                      <option value="USD">USD ($)</option>
-                      <option value="EUR">EUR (€)</option>
-                    </select>
-                  </label>
-                </div>
-                <label>
-                  Company Size
-                  <select value={companySize} onChange={(e) => setCompanySize(e.target.value)}>
-                    <option value="1-10 Employees">1-10 Employees</option>
-                    <option value="10-50 Employees">10-50 Employees</option>
-                    <option value="50-250 Employees">50-250 Employees</option>
-                  </select>
-                </label>
-                <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
-                  <button type="button" className="cancel-button" onClick={() => setSignUpStep(1)} style={{ flex: 1 }}>
-                    Back
-                  </button>
-                  <button className="primary-button" disabled={busy} style={{ flex: 2 }}>
-                    {busy ? "Registering..." : "Create Account & Launch"} <Arrow />
-                  </button>
-                </div>
-              </>
-            )}
-          </form>
-        )}
-
-        {/* 3. FORGOT PASSWORD FORM */}
-        {mode === "forgot" && (
-          <form onSubmit={handleForgotPassword}>
-            <h1>Reset your password</h1>
-            <p className="auth-subtitle">Enter your email and we will send a password reset link.</p>
-            <label>
-              Work Email Address
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" />
-            </label>
-            <button className="primary-button auth-submit" disabled={busy} style={{ marginTop: "8px", width: "100%" }}>
-              {busy ? "Sending..." : "Send Reset Link"} <Arrow />
-            </button>
-          </form>
-        )}
-
-        {message && (
-          <p className="auth-message" style={{ marginTop: "16px", color: isError ? "#cc5d5d" : "#1c8b69", background: isError ? "#fdf2f2" : "#edf7f3" }}>
-            {message}
-          </p>
-        )}
-      </div>
-    </main>
+        return <p key={idx} style={{ margin: 0 }}>{formattedLine}</p>;
+      })}
+    </div>
   );
 }
+
+function SkeletonOverview() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      <div className="metrics-grid">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="metric-card" style={{ padding: "20px", background: "#fff" }}>
+            <div className="skeleton-box" style={{ width: "40%", height: "12px" }} />
+            <div className="skeleton-box" style={{ width: "70%", height: "30px", marginTop: "14px" }} />
+            <div className="skeleton-box" style={{ width: "50%", height: "10px", marginTop: "10px" }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ background: "#fff", borderRadius: "14px", padding: "24px", border: "1px solid var(--line)" }}>
+        <div className="skeleton-box" style={{ width: "30%", height: "20px", marginBottom: "16px" }} />
+        <div className="skeleton-box" style={{ width: "100%", height: "46px" }} />
+      </div>
+    </div>
+  );
+}
+
+function SkeletonTablePage() {
+  return (
+    <div style={{ background: "#fff", borderRadius: "14px", padding: "24px", border: "1px solid var(--line)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
+        <div className="skeleton-box" style={{ width: "25%", height: "24px" }} />
+        <div className="skeleton-box" style={{ width: "120px", height: "38px" }} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="skeleton-box" style={{ height: "44px" }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  org_id: string;
+  permissions: {
+    role_name?: string;
+    scope?: string;
+    is_super_admin?: boolean;
+    can_view_saas_metrics?: boolean;
+    can_manage_orgs?: boolean;
+    can_view_audit_logs?: boolean;
+    can_manage_users?: boolean;
+    can_view_all?: boolean;
+    can_create_invoice?: boolean;
+    can_edit_invoice?: boolean;
+    can_delete_invoice?: boolean;
+    can_manage_expenses?: boolean;
+    can_send_reminders?: boolean;
+    can_record_promises?: boolean;
+    can_use_ai_cfo?: boolean;
+    can_edit_settings?: boolean;
+    can_delete_org?: boolean;
+  };
+}
+
+const defaultUserProfile: UserProfile = {
+  id: "usr-1",
+  email: "raju@abcdigital.com",
+  full_name: "Raju",
+  role: "owner",
+  org_id: "org-1",
+  permissions: {
+    role_name: "Owner",
+    scope: "Organization",
+    is_super_admin: false,
+    can_view_saas_metrics: false,
+    can_manage_orgs: false,
+    can_view_audit_logs: true,
+    can_manage_users: true,
+    can_view_all: true,
+    can_create_invoice: true,
+    can_edit_invoice: true,
+    can_delete_invoice: true,
+    can_manage_expenses: true,
+    can_send_reminders: true,
+    can_record_promises: true,
+    can_use_ai_cfo: true,
+    can_edit_settings: true,
+    can_delete_org: true,
+  },
+};
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(!supabase);
+  const [currentUser, setCurrentUser] = useState<UserProfile>(defaultUserProfile);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
-  // Multi-Tenant & Onboarding State
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
-  const [userRole, setUserRole] = useState<Role>("owner");
-  const [onboardingNeeded, setOnboardingNeeded] = useState(false);
+  const [dbUsersList, setDbUsersList] = useState<UserProfile[]>([]);
+  const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserRole, setNewUserRole] = useState("accountant");
+
+  // Auth & Registration Page State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authViewMode, setAuthViewMode] = useState<"login" | "register">("login");
+  const [regFullName, setRegFullName] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [regRole, setRegRole] = useState("owner");
+  const [regOrgName, setRegOrgName] = useState("ABC Digital Solutions");
+  const [authError, setAuthError] = useState("");
+
   const [activeNav, setActiveNav] = useState("Overview");
+  const [loadingData, setLoadingData] = useState(true);
 
-  // Dynamic Financial Balance State
-  const [baseCashBalance, setBaseCashBalance] = useState(840000);
+  // Core Data States
+  const [healthData, setHealthData] = useState<any>({
+    score: 74,
+    status: "WATCH",
+    color: "yellow",
+    explanation: "Your cash risk is WATCH (74/100) because overdue receivables are pending.",
+    metrics: {
+      cash_balance: "₹8,40,000",
+      receivables: "₹31,70,000",
+      overdue: "₹7,90,000",
+      due_this_week: "₹4,20,000",
+      cash_runway_days: 42,
+    },
+  });
+
+  const [agingData, setAgingData] = useState<any>({
+    total_receivables: "₹31,70,000",
+    current: "₹23,80,000",
+    overdue: "₹7,90,000",
+    high_risk: "₹4,20,000",
+    aging_buckets: { "0_30_days": "₹14,00,000", "31_60_days": "₹7,00,000", "61_90_days": "₹5,00,000", "90_plus_days": "₹5,70,000" },
+    customer_risk: [],
+  });
+
+  const [forecastData, setForecastData] = useState<any>({
+    range: "30 days",
+    projected_balance: "₹11,20,000",
+    change_from_today: "+₹2,80,000",
+    confidence: 82,
+    timeline_points: [],
+  });
+
+  const [collectionsPriorities, setCollectionsPriorities] = useState<any>({ summary: "", items: [] });
+  const [alertsList, setAlertsList] = useState<any[]>([]);
+
+  const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
+  const [customers, setCustomers] = useState<CustomerItem[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [promises, setPromises] = useState<PaymentPromise[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [savedDatasets, setSavedDatasets] = useState<SavedDataset[]>([]);
+
   const [range, setRange] = useState<"30 days" | "60 days" | "90 days" | "6 months">("30 days");
   const [toast, setToast] = useState("");
+
+  // AI CFO Interactive Chat State
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiResponse, setAiResponse] = useState("");
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerItem | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "init-1",
+      sender: "cfo",
+      text: "### **AI CFO Assistant**\n\nHello! I am your **AI CFO Assistant**. How can I help you analyze cash flow, track receivables, or optimize expenses today?",
+      time: "Just now",
+    },
+  ]);
 
-  // Modal State Variables
-  const [showInviteModal, setShowInviteModal] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatThreadRef = useRef<HTMLDivElement>(null);
+
+  // Modals
   const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
   const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
-  const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
-  const [showAddPromiseModal, setShowAddPromiseModal] = useState(false);
+  const [showDatasetModal, setShowDatasetModal] = useState(false);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [showPromiseModal, setShowPromiseModal] = useState(false);
 
-  // Form Inputs for Modals
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<Role>("accountant");
-
-  // New Invoice Form
+  // Form States
   const [invCustomer, setInvCustomer] = useState("");
+  const [invNumber, setInvNumber] = useState(`INV-${Math.floor(2800 + Math.random() * 100)}`);
   const [invAmount, setInvAmount] = useState("");
   const [invDueDate, setInvDueDate] = useState("");
-  const [invNumber, setInvNumber] = useState("INV-2845");
+  const [invNotes, setInvNotes] = useState("");
 
-  // New Expense Form
-  const [expCategory, setExpCategory] = useState("Cloud Hosting");
+  const [expCategory, setExpCategory] = useState("Software & Hosting");
   const [expSupplier, setExpSupplier] = useState("");
   const [expAmount, setExpAmount] = useState("");
-  const [expDate, setExpDate] = useState("Today");
+  const [expDate, setExpDate] = useState("");
 
-  // New Customer Form
   const [custName, setCustName] = useState("");
   const [custEmail, setCustEmail] = useState("");
-  const [custAmount, setCustAmount] = useState("");
-  const [custScore, setCustScore] = useState("85");
+  const [custPhone, setCustPhone] = useState("");
+  const [custOutstanding, setCustOutstanding] = useState("");
+  const [custRisk, setCustRisk] = useState("medium");
 
-  // New Supplier Form
-  const [supName, setSupName] = useState("");
-  const [supCreditDays, setSupCreditDays] = useState("30");
-  const [supTotalSpend, setSupTotalSpend] = useState("₹1.5L");
+  const [datasetName, setDatasetName] = useState("");
+  const [datasetDesc, setDatasetDesc] = useState("");
+  const [datasetRawInput, setDatasetRawInput] = useState("");
+  const [datasetImporting, setDatasetImporting] = useState(false);
 
-  // New Promise Form
-  const [promCustomer, setPromCustomer] = useState("");
-  const [promAmount, setPromAmount] = useState("");
-  const [promDate, setPromDate] = useState("");
+  // Collection Workflow Form States
+  const [selectedReminderItem, setSelectedReminderItem] = useState<any>(null);
+  const [reminderChannel, setReminderChannel] = useState<"whatsapp" | "email" | "sms">("whatsapp");
+  const [reminderMessage, setReminderMessage] = useState("");
 
-  // Scenario Delay Simulator State
-  const [delayDays, setDelayDays] = useState("30");
-  const [delayAmount, setDelayAmount] = useState("320000");
-  const [simulatedRunway, setSimulatedRunway] = useState<string | null>(null);
-
-  // Data Collections with Live State Mutations
-  const [invoices, setInvoices] = useState<InvoiceItem[]>(initialInvoices);
-  const [databaseCustomers, setDatabaseCustomers] = useState<CustomerItem[]>(initialCustomers);
-  const [expenses, setExpenses] = useState<Expense[]>([
-    { id: "E1", category: "Cloud Hosting", supplier: "CloudHost India", amount: "₹1,18,000", numericAmount: 118000, date: "05 Sep", status: "Paid", isUnusual: true },
-    { id: "E2", category: "Software Licenses", supplier: "DesignStack", amount: "₹75,000", numericAmount: 75000, date: "08 Sep", status: "Pending", isUnusual: false },
-  ]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([
-    { id: "S1", name: "CloudHost India", creditDays: 7, score: 92, totalSpend: "₹4.2L" },
-    { id: "S2", name: "DesignStack", creditDays: 30, score: 78, totalSpend: "₹2.1L" },
-  ]);
-  const [promises, setPromises] = useState<PaymentPromise[]>([
-    { id: "P1", customerName: "ABC Ltd", amount: "₹85,000", promisedDate: "20 Sep 2026", status: "pending" },
-    { id: "P2", customerName: "Northstar Studio", amount: "₹1,42,000", promisedDate: "14 Sep 2026", status: "missed" },
-  ]);
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([
-    { email: "raju@abcdigital.in", role: "owner", status: "Active" },
-    { email: "anil@abcdigital.in", role: "accountant", status: "Active" },
-    { email: "priya@abcdigital.in", role: "collections", status: "Pending" },
-  ]);
+  const [promiseCustomer, setPromiseCustomer] = useState("");
+  const [promiseInvoice, setPromiseInvoice] = useState("");
+  const [promiseAmount, setPromiseAmount] = useState("");
+  const [promiseDate, setPromiseDate] = useState("");
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-  // Calculate live dynamic receivables and overdue totals
-  const totalReceivables = invoices
-    .filter((inv) => inv.status !== "Paid")
-    .reduce((sum, inv) => sum + inv.numericAmount, 0);
-
-  const totalOverdue = invoices
-    .filter((inv) => inv.status === "Overdue")
-    .reduce((sum, inv) => sum + inv.numericAmount, 0);
-
-  useEffect(() => {
-    if (!supabase) return;
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      setAuthReady(true);
-    });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => listener.subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!user || !supabase) return;
-
-    async function loadUserOrgs() {
-      const { data: memberships } = await supabase!
-        .from("organization_members")
-        .select("organization_id, role, organizations(id, name, industry, currency)")
-        .eq("user_id", user!.id);
-
-      if (memberships && memberships.length > 0) {
-        const orgList: Organization[] = memberships.map((m: any) => ({
-          id: m.organizations?.id || m.organization_id,
-          name: m.organizations?.name || "ABC Digital Solutions",
-          industry: m.organizations?.industry,
-          currency: m.organizations?.currency,
-          role: m.role as Role,
-        }));
-        setOrganizations(orgList);
-        setActiveOrg(orgList[0]);
-        setUserRole(orgList[0].role || "owner");
-        setOnboardingNeeded(false);
-      } else {
-        setOnboardingNeeded(true);
-      }
-    }
-
-    loadUserOrgs();
-  }, [user]);
-
   function notify(msg: string) {
     setToast(msg);
-    window.setTimeout(() => setToast(""), 3500);
+    window.setTimeout(() => setToast(""), 4500);
   }
 
-  // REAL WORKFLOW HANDLERS
+  function handleTabChange(tabName: string) {
+    setActiveNav(tabName);
+    setLoadingData(true);
+    setTimeout(() => setLoadingData(false), 250);
+  }
 
-  // 1. Create Invoice Real Handler
-  async function handleCreateInvoice(e: FormEvent) {
-    e.preventDefault();
-    const numeric = parseFloat(invAmount) || 0;
-    const formattedAmount = `₹${numeric.toLocaleString("en-IN")}`;
-    const newInv: InvoiceItem = {
-      id: invNumber,
-      customer: invCustomer,
-      amount: formattedAmount,
-      numericAmount: numeric,
-      status: "Sent",
-      due: invDueDate ? `Due ${invDueDate}` : "Due in 14 days",
-      dueDate: invDueDate || "2026-09-24",
-    };
+  async function safeFetchJson(url: string) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return await res.json();
+    } catch (err) {
+      console.warn(`Failed to fetch ${url}:`, err);
+    }
+    return null;
+  }
 
-    // Insert into state
-    setInvoices((prev) => [newInv, ...prev]);
-
-    // DB insert if connected
-    if (supabase && activeOrg) {
-      await supabase.from("invoices").insert([
-        {
-          organization_id: activeOrg.id,
-          invoice_number: invNumber,
-          customer_name: invCustomer,
-          total_amount: numeric,
-          status: "sent",
-          due_date: invDueDate || null,
-        },
+  async function fetchLiveData(showSkeleton = false) {
+    if (showSkeleton) setLoadingData(true);
+    try {
+      const [hData, aData, fData, iData, cData, eData, pData, dData, colData, altData, supData] = await Promise.all([
+        safeFetchJson(`${apiUrl}/api/v1/health-score`),
+        safeFetchJson(`${apiUrl}/api/v1/receivables/aging`),
+        safeFetchJson(`${apiUrl}/api/v1/forecast?range=${encodeURIComponent(range)}`),
+        safeFetchJson(`${apiUrl}/api/v1/invoices`),
+        safeFetchJson(`${apiUrl}/api/v1/customers`),
+        safeFetchJson(`${apiUrl}/api/v1/expenses`),
+        safeFetchJson(`${apiUrl}/api/v1/promises`),
+        safeFetchJson(`${apiUrl}/api/v1/datasets`),
+        safeFetchJson(`${apiUrl}/api/v1/collections/priorities`),
+        safeFetchJson(`${apiUrl}/api/v1/alerts`),
+        safeFetchJson(`${apiUrl}/api/v1/suppliers`),
       ]);
+
+      if (hData) setHealthData(hData);
+      if (aData) setAgingData(aData);
+      if (fData) setForecastData(fData);
+      if (iData) setInvoices(iData);
+      if (cData) setCustomers(cData);
+      if (eData) setExpenses(eData);
+      if (pData) setPromises(pData);
+      if (dData) setSavedDatasets(dData);
+      if (colData) setCollectionsPriorities(colData);
+      if (altData) setAlertsList(altData);
+      if (supData) setSuppliers(supData);
+    } catch (err) {
+      console.error("Backend connectivity issue:", err);
+    } finally {
+      setLoadingData(false);
     }
-
-    notify(`Invoice ${invNumber} for ${invCustomer} created successfully! Receivables updated.`);
-    setShowNewInvoiceModal(false);
-    setInvCustomer("");
-    setInvAmount("");
-    setInvDueDate("");
-    setInvNumber(`INV-${Math.floor(2845 + Math.random() * 100)}`);
   }
 
-  // 2. Mark Invoice Paid Real Handler
-  async function handleMarkInvoicePaid(invId: string) {
-    const target = invoices.find((i) => i.id === invId);
-    if (!target) return;
+  useEffect(() => {
+    fetchLiveData(true);
+  }, [range]);
 
-    setInvoices((prev) =>
-      prev.map((i) => (i.id === invId ? { ...i, status: "Paid", due: "Paid & Reconciled" } : i))
-    );
-    setBaseCashBalance((prev) => prev + target.numericAmount);
-
-    if (supabase) {
-      await supabase.from("invoices").update({ status: "paid" }).eq("invoice_number", invId);
-    }
-
-    notify(`Invoice ${invId} marked as Paid! Cash balance increased by ${target.amount}.`);
-  }
-
-  // 3. Add Expense Real Handler
-  async function handleAddExpense(e: FormEvent) {
-    e.preventDefault();
-    const numeric = parseFloat(expAmount) || 0;
-    const formatted = `₹${numeric.toLocaleString("en-IN")}`;
-    const newExp: Expense = {
-      id: `E${expenses.length + 1}`,
-      category: expCategory,
-      supplier: expSupplier || "General Vendor",
-      amount: formatted,
-      numericAmount: numeric,
-      date: expDate || "Today",
-      status: "Paid",
-      isUnusual: numeric > 100000,
-    };
-
-    setExpenses((prev) => [newExp, ...prev]);
-
-    if (supabase && activeOrg) {
-      await supabase.from("expenses").insert([
-        {
-          organization_id: activeOrg.id,
-          category: expCategory,
-          supplier: expSupplier,
-          amount: numeric,
-          expense_date: new Date().toISOString(),
-        },
-      ]);
-    }
-
-    notify(`Expense for ${expCategory} (${formatted}) recorded successfully!`);
-    setShowAddExpenseModal(false);
-    setExpSupplier("");
-    setExpAmount("");
-  }
-
-  // 4. Add Customer Real Handler
-  async function handleAddCustomer(e: FormEvent) {
-    e.preventDefault();
-    const numeric = parseFloat(custAmount) || 0;
-    const scoreNum = parseInt(custScore) || 80;
-    const formatted = `₹${numeric.toLocaleString("en-IN")}`;
-    const initials = custName
-      .split(" ")
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2) || "CU";
-    const colors = ["#1c8b69", "#db7438", "#cc5d5d", "#2563eb", "#d97706"];
-    const color = colors[Math.floor(Math.random() * colors.length)];
-
-    const newCust: CustomerItem = {
-      initials,
-      name: custName,
-      email: custEmail,
-      invoice: `INV-${Math.floor(2800 + Math.random() * 50)}`,
-      days: numeric > 0 ? "Due in 15 days" : "Clear balance",
-      score: scoreNum,
-      color,
-      outstanding: formatted,
-      numericOutstanding: numeric,
-    };
-
-    setDatabaseCustomers((prev) => [newCust, ...prev]);
-
-    if (supabase && activeOrg) {
-      await supabase.from("customers").insert([
-        {
-          organization_id: activeOrg.id,
-          name: custName,
-          email: custEmail,
-          outstanding_balance: numeric,
-          reliability_score: scoreNum,
-        },
-      ]);
-    }
-
-    notify(`Customer ${custName} added to risk matrix with score ${scoreNum}/100.`);
-    setShowAddCustomerModal(false);
-    setCustName("");
-    setCustEmail("");
-    setCustAmount("");
-  }
-
-  // 5. Add Supplier Real Handler
-  function handleAddSupplier(e: FormEvent) {
-    e.preventDefault();
-    const newSup: Supplier = {
-      id: `S${suppliers.length + 1}`,
-      name: supName,
-      creditDays: parseInt(supCreditDays) || 30,
-      score: 85,
-      totalSpend: supTotalSpend || "₹1.0L",
-    };
-    setSuppliers((prev) => [newSup, ...prev]);
-    notify(`Supplier ${supName} added with ${supCreditDays} days credit term.`);
-    setShowAddSupplierModal(false);
-    setSupName("");
-  }
-
-  // 6. Add Payment Promise Real Handler
-  async function handleAddPromise(e: FormEvent) {
-    e.preventDefault();
-    const numeric = parseFloat(promAmount) || 0;
-    const formatted = `₹${numeric.toLocaleString("en-IN")}`;
-    const newProm: PaymentPromise = {
-      id: `P${promises.length + 1}`,
-      customerName: promCustomer,
-      amount: formatted,
-      promisedDate: promDate || "25 Sep 2026",
-      status: "pending",
-    };
-    setPromises((prev) => [newProm, ...prev]);
-
-    if (supabase && activeOrg) {
-      await supabase.from("payment_promises").insert([
-        {
-          organization_id: activeOrg.id,
-          customer_name: promCustomer,
-          amount: numeric,
-          promised_date: promDate || null,
-          status: "pending",
-        },
-      ]);
-    }
-
-    notify(`Payment Promise recorded for ${promCustomer} (${formatted}) on ${newProm.promisedDate}.`);
-    setShowAddPromiseModal(false);
-    setPromCustomer("");
-    setPromAmount("");
-    setPromDate("");
-  }
-
-  // 7. Real File Export Handler (CSV Download in Browser)
-  function handleExportReport(reportName: string) {
-    let csvData = "";
-    if (reportName.includes("Invoice") || reportName.includes("Aging") || reportName.includes("Cash")) {
-      csvData = "Invoice Number,Customer Name,Amount,Status,Due Date\n";
-      invoices.forEach((inv) => {
-        csvData += `"${inv.id}","${inv.customer}","${inv.numericAmount}","${inv.status}","${inv.due}"\n`;
-      });
+  useEffect(() => {
+    const saved = localStorage.getItem("cashpilot_user");
+    if (saved) {
+      try {
+        const u = JSON.parse(saved);
+        setCurrentUser(u);
+        setIsAuthenticated(true);
+      } catch (e) {}
     } else {
-      csvData = "Customer Name,Email,Outstanding Balance,Reliability Score\n";
-      databaseCustomers.forEach((c) => {
-        csvData += `"${c.name}","${c.email || ''}","${c.numericOutstanding}","${c.score}"\n`;
-      });
+      setIsAuthenticated(false);
     }
+    fetchUsersAndAuditLogs();
+  }, []);
 
-    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `${reportName.toLowerCase().replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    notify(`Report downloaded: ${reportName}.csv`);
+  async function fetchUsersAndAuditLogs() {
+    try {
+      const [uRes, aRes] = await Promise.all([
+        fetch(`${apiUrl}/api/v1/auth/users`),
+        fetch(`${apiUrl}/api/v1/audit-logs`),
+      ]);
+      if (uRes.ok) setDbUsersList(await uRes.json());
+      if (aRes.ok) setAuditLogsList(await aRes.json());
+    } catch (e) {}
   }
 
-  async function askAiCfo(customQ?: string) {
-    const q = customQ || aiQuestion;
-    if (!q) return;
-    setAiResponse("Analyzing database records...");
+  async function handleLogin(email: string, pass: string) {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pass }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentUser(data.user);
+        setIsAuthenticated(true);
+        localStorage.setItem("cashpilot_user", JSON.stringify(data.user));
+        notify(`Welcome back, ${data.user.full_name} (${data.user.permissions?.role_name || data.user.role})!`);
+        setShowAuthModal(false);
+        setLoginEmail("");
+        setLoginPassword("");
+        fetchUsersAndAuditLogs();
+      } else {
+        const errData = await res.json();
+        setAuthError(errData.detail || "Authentication failed. Invalid email or password.");
+        notify("Authentication failed. Invalid email or password.");
+      }
+    } catch (err) {
+      setAuthError("Authentication error. Check backend connection.");
+      notify("Authentication error. Check backend connection.");
+    }
+    setAuthLoading(false);
+  }
+
+  async function handleRegisterSubmit(e: FormEvent) {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: regFullName,
+          email: regEmail,
+          password: regPassword,
+          role: regRole,
+          org_name: regOrgName,
+        }),
+      });
+      if (res.ok) {
+        notify(`Account created successfully! Please sign in with your email and password.`);
+        setLoginEmail(regEmail);
+        setLoginPassword("");
+        setAuthViewMode("login");
+        setRegFullName("");
+        setRegEmail("");
+        setRegPassword("");
+        fetchUsersAndAuditLogs();
+      } else {
+        const errData = await res.json();
+        setAuthError(errData.detail || "Registration failed.");
+        notify(errData.detail || "Registration failed");
+      }
+    } catch (err) {
+      setAuthError("Registration error. Check backend connection.");
+      notify("Registration error. Check backend connection.");
+    }
+    setAuthLoading(false);
+  }
+
+  async function handleLogout() {
+    try {
+      await fetch(`${apiUrl}/api/v1/auth/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: currentUser.id,
+          user_name: currentUser.full_name,
+          user_role: currentUser.role,
+        }),
+      });
+    } catch (e) {}
+    localStorage.removeItem("cashpilot_user");
+    setIsAuthenticated(false);
+    setShowAuthModal(false);
+    notify("Logged out successfully.");
+  }
+
+  async function handleCreateUserSubmit(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/auth/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: newUserName,
+          email: newUserEmail,
+          role: newUserRole,
+        }),
+      });
+      if (res.ok) {
+        notify(`User ${newUserName} created with role ${newUserRole}!`);
+        setShowAddUserModal(false);
+        setNewUserName("");
+        setNewUserEmail("");
+        fetchUsersAndAuditLogs();
+      }
+    } catch (e) {
+      notify("Failed to create user");
+    }
+  }
+
+  useEffect(() => {
+    if (chatThreadRef.current) {
+      chatThreadRef.current.scrollTo({
+        top: chatThreadRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [chatMessages, aiLoading]);
+
+  // AI CFO Interactive Chat Handler
+  async function handleSendChatMessage(customText?: string) {
+    const qText = customText || aiQuestion;
+    if (!qText.trim() || aiLoading) return;
+
+    const userMsgId = `msg-${Date.now()}`;
+    const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    setChatMessages((prev) => [...prev, { id: userMsgId, sender: "user", text: qText, time: nowTime }]);
+    if (!customText) setAiQuestion("");
+    setAiLoading(true);
+
     try {
       const res = await fetch(`${apiUrl}/api/v1/ai/cfo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: qText }),
       });
-      const data = await res.json();
-      setAiResponse(data.insight || "AI analysis completed.");
-    } catch {
-      setAiResponse("AI CFO Recommendation: Focus on recovering ₹2.4L overdue from Acme Cloudworks today to maintain 42-day runway.");
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `cfo-${Date.now()}`,
+            sender: "cfo",
+            text: data.insight,
+            time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          },
+        ]);
+        setAiResponse(data.insight);
+      } else {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `err-${Date.now()}`,
+            sender: "cfo",
+            text: "Unable to process question. Please check backend connection.",
+            time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          },
+        ]);
+      }
+    } catch (err) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          sender: "cfo",
+          text: "Unable to connect to AI CFO Agent backend.",
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    }
+    setAiLoading(false);
+  }
+
+  // Invoice Handlers
+  async function handleCreateInvoice(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/invoices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoice_number: invNumber,
+          customer_name: invCustomer,
+          amount: parseFloat(invAmount) || 0,
+          due_date: invDueDate || new Date().toISOString().split("T")[0],
+          notes: invNotes,
+        }),
+      });
+
+      if (res.ok) {
+        notify(`Invoice ${invNumber} created for ${invCustomer}!`);
+        setShowNewInvoiceModal(false);
+        setInvCustomer("");
+        setInvAmount("");
+        setInvDueDate("");
+        setInvNotes("");
+        setInvNumber(`INV-${Math.floor(2800 + Math.random() * 100)}`);
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to create invoice");
     }
   }
 
-  function handleInviteMember(e: FormEvent) {
+  async function handleToggleInvoiceStatus(id: string, currentStatus: string) {
+    const newStatus = currentStatus === "paid" ? "open" : "paid";
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/invoices/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.feedback && data.feedback.new_score) {
+          notify(`Payment Received! Customer Score updated: ${data.feedback.old_score} → ${data.feedback.new_score} (ML Feedback Loop executed)`);
+        } else {
+          notify(`Invoice marked as ${newStatus.toUpperCase()}`);
+        }
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to update invoice status");
+    }
+  }
+
+  async function handleDeleteInvoice(id: string) {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/invoices/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        notify("Invoice deleted");
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to delete invoice");
+    }
+  }
+
+  // Collection Workflow: Open Send Reminder Modal
+  function openSendReminder(item: any) {
+    setSelectedReminderItem(item);
+    setReminderMessage(item.suggested_message || `Hello ${item.customer_name}, gentle reminder regarding overdue invoice ${item.invoice_number} for ${item.amount}.`);
+    setShowReminderModal(true);
+  }
+
+  async function handleSendReminderSubmit(e: FormEvent) {
     e.preventDefault();
-    setTeamMembers((prev) => [...prev, { email: inviteEmail, role: inviteRole, status: "Pending" }]);
-    notify(`Invitation sent to ${inviteEmail} as ${inviteRole.toUpperCase()}`);
-    setShowInviteModal(false);
-    setInviteEmail("");
+    if (!selectedReminderItem) return;
+
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/collections/send-reminder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoice_id: selectedReminderItem.invoice_id,
+          customer_name: selectedReminderItem.customer_name,
+          invoice_number: selectedReminderItem.invoice_number,
+          channel: reminderChannel,
+          message: reminderMessage,
+        }),
+      });
+
+      if (res.ok) {
+        notify(`Reminder sent to ${selectedReminderItem.customer_name} via ${reminderChannel.toUpperCase()}! Activity logged.`);
+        setShowReminderModal(false);
+      }
+    } catch (err) {
+      notify("Failed to send reminder");
+    }
   }
 
-  function handleSignOut() {
-    if (supabase) supabase.auth.signOut().catch(() => undefined);
-    setUser(null);
-    setActiveOrg(null);
-    setOrganizations([]);
+  // Promise to Pay Handlers
+  function openRecordPromise(customerName?: string, invoiceNum?: string, amountVal?: string) {
+    setPromiseCustomer(customerName || "");
+    setPromiseInvoice(invoiceNum || "");
+    setPromiseAmount(amountVal ? amountVal.replace(/[^\d.]/g, "") : "");
+    const inAWeek = new Date();
+    inAWeek.setDate(inAWeek.getDate() + 7);
+    setPromiseDate(inAWeek.toISOString().split("T")[0]);
+    setShowPromiseModal(true);
   }
 
-  if (!authReady) {
-    return (
-      <main className="auth-shell">
-        <div className="auth-card">
-          <h1>Connecting to CashPilot...</h1>
-        </div>
-      </main>
-    );
+  async function handleCreatePromiseSubmit(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/promises`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: promiseCustomer,
+          invoice_number: promiseInvoice,
+          amount: parseFloat(promiseAmount) || 0,
+          promised_date: promiseDate,
+          status: "pending",
+          notes: "Recorded promise to pay via Action Center",
+        }),
+      });
+
+      if (res.ok) {
+        notify(`Promise to Pay recorded for ₹${promiseAmount}! Cash Forecast dynamically updated.`);
+        setShowPromiseModal(false);
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to record payment promise");
+    }
   }
 
-  if (!user) {
-    return <MultiStepAuthPanel onAuthenticated={setUser} />;
+  // Customer & Expense CRUD
+  async function handleCreateCustomer(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/customers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: custName,
+          email: custEmail,
+          phone: custPhone,
+          outstanding_amount: parseFloat(custOutstanding) || 0,
+          risk_level: custRisk,
+        }),
+      });
+      if (res.ok) {
+        notify(`Customer ${custName} added`);
+        setShowAddCustomerModal(false);
+        setCustName("");
+        setCustEmail("");
+        setCustPhone("");
+        setCustOutstanding("");
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to add customer");
+    }
   }
 
-  if (onboardingNeeded) {
-    return (
-      <OnboardingWizard
-        user={user}
-        onComplete={(newOrg) => {
-          setOrganizations([newOrg]);
-          setActiveOrg(newOrg);
-          setUserRole("owner");
-          setOnboardingNeeded(false);
-        }}
-      />
-    );
+  async function handleCreateExpense(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/expenses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: expCategory,
+          supplier_name: expSupplier || "Vendor",
+          amount: parseFloat(expAmount) || 0,
+          expense_date: expDate || new Date().toISOString().split("T")[0],
+          payment_status: "paid",
+          is_unusual: (parseFloat(expAmount) || 0) > 100000,
+        }),
+      });
+      if (res.ok) {
+        notify(`Expense logged for ${expCategory}`);
+        setShowAddExpenseModal(false);
+        setExpSupplier("");
+        setExpAmount("");
+        setExpDate("");
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to log expense");
+    }
   }
 
-  // Define All Sidebar Menu Items mapped to RBAC permissions
-  const navItems: { label: string; icon: string; permission: Permission }[] = [
-    { label: "Overview", icon: "🏠", permission: "dashboard.view" },
-    { label: "Cash Flow", icon: "💰", permission: "cashflow.view" },
-    { label: "Invoices", icon: "🧾", permission: "invoice.view" },
-    { label: "Customers", icon: "👥", permission: "customer.view" },
-    { label: "Payments", icon: "💳", permission: "payment.view" },
-    { label: "Expenses", icon: "💸", permission: "expense.view" },
-    { label: "Suppliers", icon: "🏭", permission: "supplier.view" },
-    { label: "Analytics", icon: "📊", permission: "analytics.view" },
-    { label: "AI CFO", icon: "🤖", permission: "ai.insights" },
-    { label: "Collections", icon: "📩", permission: "collections.view" },
-    { label: "Alerts", icon: "🔔", permission: "dashboard.view" },
-    { label: "Reports", icon: "📄", permission: "reports.view" },
-    { label: "Team", icon: "👤", permission: "team.view" },
-    { label: "Settings", icon: "⚙", permission: "settings.manage" },
+  // Dataset Management
+  async function handleImportDataset(e: FormEvent) {
+    e.preventDefault();
+    if (!datasetName.trim()) return;
+    setDatasetImporting(true);
+    try {
+      let parsedData: any = {};
+      if (datasetRawInput.trim()) {
+        try {
+          parsedData = JSON.parse(datasetRawInput);
+        } catch {
+          const lines = datasetRawInput.trim().split("\n");
+          const invoicesList = [];
+          for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split(",");
+            if (parts.length >= 3) {
+              invoicesList.push({
+                invoice_number: parts[0].trim(),
+                customer_name: parts[1].trim(),
+                amount: parseFloat(parts[2].trim()) || 0,
+                due_date: parts[3] ? parts[3].trim() : new Date().toISOString().split("T")[0],
+              });
+            }
+          }
+          parsedData.invoices = invoicesList;
+        }
+      }
+
+      const res = await fetch(`${apiUrl}/api/v1/datasets/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_name: datasetName,
+          description: datasetDesc,
+          invoices: parsedData.invoices || [],
+          customers: parsedData.customers || [],
+          expenses: parsedData.expenses || [],
+        }),
+      });
+
+      if (res.ok) {
+        notify(`Dataset '${datasetName}' imported and active!`);
+        setShowDatasetModal(false);
+        setDatasetName("");
+        setDatasetDesc("");
+        setDatasetRawInput("");
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to import dataset");
+    }
+    setDatasetImporting(false);
+  }
+
+  async function handleLoadDataset(dsId: string, name: string) {
+    setLoadingData(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/datasets/${dsId}/load`, { method: "POST" });
+      if (res.ok) {
+        notify(`Switched active dataset to '${name}'`);
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to load dataset");
+      setLoadingData(false);
+    }
+  }
+
+  async function handleResetWorkspace() {
+    if (!confirm("Reset workspace to initial seed dataset?")) return;
+    setLoadingData(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/datasets/reset`, { method: "POST" });
+      if (res.ok) {
+        notify("Workspace reset to default seed dataset");
+        fetchLiveData(true);
+      }
+    } catch (err) {
+      notify("Failed to reset workspace");
+      setLoadingData(false);
+    }
+  }
+
+  async function handleExportDataset() {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/datasets/export`);
+      if (res.ok) {
+        const data = await res.json();
+        const jsonStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+        const downloadAnchor = document.createElement("a");
+        downloadAnchor.setAttribute("href", jsonStr);
+        downloadAnchor.setAttribute("download", `cashpilot_dataset_${Date.now()}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+        notify("Exported workspace dataset!");
+      }
+    } catch (err) {
+      notify("Failed to export dataset");
+    }
+  }
+
+  const metrics = healthData.metrics || {};
+
+  // Plain White/Black Monochrome Navigation Config (No Emojis!)
+  const navItems = [
+    { name: "Overview", icon: IconOverview },
+    { name: "Cash Flow", icon: IconCashFlow },
+    { name: "Invoices", icon: IconInvoices },
+    { name: "Customers", icon: IconCustomers },
+    { name: "Payments", icon: IconPayments },
+    { name: "Expenses", icon: IconExpenses },
+    { name: "Suppliers", icon: IconSuppliers },
+    { name: "Collections", icon: IconCollections },
+    { name: "Analytics", icon: IconAnalytics },
+    { name: "AI CFO Agent", icon: IconAiCfo },
+    { name: "Alerts", icon: IconAlerts },
+    { name: "Reports", icon: IconReports },
+    { name: "Team", icon: IconTeam },
+    { name: "Settings", icon: IconSettings },
   ];
 
-  const visibleNav = navItems.filter((item) => hasPermission(userRole, item.permission));
+  if (!isAuthenticated) {
+    return (
+      <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          maxHeight: "100vh",
+          display: "flex",
+          background: "var(--paper, #f5f6f1)",
+          fontFamily: "var(--font-sans, system-ui, sans-serif)",
+          color: "var(--ink, #202522)",
+          overflow: "hidden",
+        }}
+      >
+        {/* Left Hero Branding Banner - Styled matching CashPilot sidebar theme */}
+        <div
+          style={{
+            flex: 1,
+            padding: "50px 60px",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            background: "#202522",
+            color: "#e8eee7",
+            borderRight: "1px solid rgba(255,255,255,0.06)",
+            position: "relative",
+          }}
+        >
+          <div>
+            {/* Logo */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "36px" }}>
+              <div
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "9px",
+                  background: "var(--orange, #e8793e)",
+                  color: "#ffffff",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: "18px",
+                  fontWeight: 800,
+                  boxShadow: "0 4px 12px rgba(232, 121, 62, 0.4)",
+                }}
+              >
+                CP
+              </div>
+              <span style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.8px", color: "#ffffff" }}>CashPilot</span>
+            </div>
+
+            <h1 style={{ fontSize: "36px", fontWeight: 800, lineHeight: "1.2", letterSpacing: "-1.2px", margin: "0 0 16px", color: "#ffffff" }}>
+              Enterprise Financial Intelligence & AI CFO
+            </h1>
+            <p style={{ fontSize: "14px", color: "#8f9b92", lineHeight: "1.6", maxWidth: "480px", margin: "0 0 32px" }}>
+              Predict cash shortages 60 days ahead, eliminate late payment risks, automate intelligent collection workflows, and consult your dedicated AI CFO.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px", maxWidth: "480px" }}>
+              {[
+                { title: "Real-Time Cash Runway Engine", desc: "Monitors daily liquidity, burn rate, and 30-to-90 day forecasts." },
+                { title: "Dedicated AI CFO Assistant", desc: "Instant financial audits, risk scoring, and strategic insights." },
+                { title: "ML Payment Feedback Loop", desc: "Calculates customer late-probabilities and adjusts risk scores automatically." },
+                { title: "Automated Collection Action Center", desc: "One-click WhatsApp, Email, and SMS reminders with Payment Promises tracking." },
+              ].map((feat, idx) => (
+                <div key={idx} style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                  <div style={{ width: "22px", height: "22px", borderRadius: "50%", background: "rgba(232, 121, 62, 0.2)", color: "var(--orange, #e8793e)", display: "grid", placeItems: "center", fontSize: "11px", fontWeight: 800, flexShrink: 0, marginTop: "2px" }}>
+                    ✓
+                  </div>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "#ffffff" }}>{feat.title}</h4>
+                    <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#8f9b92" }}>{feat.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ fontSize: "12px", color: "#8f9b92", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "18px" }}>
+            CashPilot Platform v1.0 · Active Organization Security & Data Access Abstraction Enabled
+          </div>
+        </div>
+
+        {/* Right Authentication Form Panel - Fit to viewport */}
+        <div style={{ width: "480px", padding: "40px 48px", background: "#ffffff", color: "var(--ink)", display: "flex", flexDirection: "column", justifyContent: "center", overflowY: "auto" }}>
+          <div style={{ marginBottom: "24px" }}>
+            <h2 style={{ fontSize: "24px", fontWeight: 800, margin: 0, letterSpacing: "-0.8px" }}>
+              {authViewMode === "login" ? "Sign In to CashPilot" : "Create CashPilot Account"}
+            </h2>
+            <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#7d8580" }}>
+              {authViewMode === "login" ? "Enter your email & password to access your role workspace" : "Register your business profile to initialize your workspace"}
+            </p>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div style={{ display: "flex", background: "#f5f6f1", padding: "4px", borderRadius: "10px", marginBottom: "20px", border: "1px solid var(--line)" }}>
+            <button
+              onClick={() => { setAuthViewMode("login"); setAuthError(""); }}
+              style={{
+                flex: 1,
+                padding: "9px",
+                fontSize: "13px",
+                fontWeight: 700,
+                borderRadius: "8px",
+                border: "none",
+                background: authViewMode === "login" ? "#ffffff" : "transparent",
+                color: authViewMode === "login" ? "var(--ink)" : "#7d8580",
+                boxShadow: authViewMode === "login" ? "0 2px 8px rgba(0,0,0,0.06)" : "none",
+                cursor: "pointer",
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => { setAuthViewMode("register"); setAuthError(""); }}
+              style={{
+                flex: 1,
+                padding: "9px",
+                fontSize: "13px",
+                fontWeight: 700,
+                borderRadius: "8px",
+                border: "none",
+                background: authViewMode === "register" ? "#ffffff" : "transparent",
+                color: authViewMode === "register" ? "var(--ink)" : "#7d8580",
+                boxShadow: authViewMode === "register" ? "0 2px 8px rgba(0,0,0,0.06)" : "none",
+                cursor: "pointer",
+              }}
+            >
+              Register Account
+            </button>
+          </div>
+
+          {authError && (
+            <div style={{ padding: "12px 16px", borderRadius: "8px", background: "#fff0ed", border: "1px solid #f8c0b6", color: "#cc5d5d", fontSize: "12px", marginBottom: "20px" }}>
+              {authError}
+            </div>
+          )}
+
+          {/* 1. SIGN IN FORM */}
+          {authViewMode === "login" && (
+            <form onSubmit={(e) => { e.preventDefault(); handleLogin(loginEmail, loginPassword); }} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "6px", letterSpacing: "0.5px" }}>
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. raju@abcdigital.com"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  style={{ width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fafbf8" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "6px", letterSpacing: "0.5px" }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter your password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  style={{ width: "100%", padding: "11px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fafbf8" }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading || !loginEmail.trim()}
+                className="primary-button"
+                style={{ width: "100%", justifyContent: "center", marginTop: "4px", padding: "12px" }}
+              >
+                {authLoading ? "Authenticating..." : "Sign In to CashPilot"}
+              </button>
+            </form>
+          )}
+
+          {/* 2. REGISTER ACCOUNT FORM */}
+          {authViewMode === "register" && (
+            <form onSubmit={handleRegisterSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "4px", letterSpacing: "0.5px" }}>
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Vikram Sharma"
+                  value={regFullName}
+                  onChange={(e) => setRegFullName(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fafbf8" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "4px", letterSpacing: "0.5px" }}>
+                  Business Email Address
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="vikram@company.com"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fafbf8" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "4px", letterSpacing: "0.5px" }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Create password"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fafbf8" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "4px", letterSpacing: "0.5px" }}>
+                  Organization Name
+                </label>
+                <input
+                  type="text"
+                  value={regOrgName}
+                  onChange={(e) => setRegOrgName(e.target.value)}
+                  placeholder="ABC Digital Solutions"
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fafbf8" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#7d8580", marginBottom: "4px", letterSpacing: "0.5px" }}>
+                  Role & Permission Scope
+                </label>
+                <select
+                  value={regRole}
+                  onChange={(e) => setRegRole(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "13px", color: "var(--ink)", background: "#fff" }}
+                >
+                  <option value="owner">Owner (Full Company Control)</option>
+                  <option value="admin">Admin (Operations & User Admin)</option>
+                  <option value="finance_manager">Finance Manager (Cash Flow & Financial Analytics)</option>
+                  <option value="accountant">Accountant (Invoices & Expenses)</option>
+                  <option value="collections_manager">Collections Manager (Receivables & Reminders)</option>
+                  <option value="viewer">Viewer (Read-Only Visibility)</option>
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading || !regEmail.trim() || !regFullName.trim()}
+                className="primary-button"
+                style={{ width: "100%", justifyContent: "center", marginTop: "4px", padding: "12px", background: "var(--emerald)" }}
+              >
+                {authLoading ? "Creating Account..." : "Create Account & Launch Workspace"}
+              </button>
+            </form>
+          )}
+
+          <div style={{ marginTop: "24px", textAlign: "center", fontSize: "12px", color: "#7d8580" }}>
+            {authViewMode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}
+            <button
+              onClick={() => { setAuthViewMode(authViewMode === "login" ? "register" : "login"); setAuthError(""); }}
+              style={{ border: "none", background: "none", color: "var(--orange)", fontWeight: 700, cursor: "pointer" }}
+            >
+              {authViewMode === "login" ? "Register Here" : "Sign In Here"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
-      {/* Dynamic RBAC Sidebar */}
+      {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">+</span>
-          <span>cashpilot</span>
+          <span className="brand-mark">CP</span>
+          <span>CashPilot</span>
         </div>
 
-        {/* Company Switcher Header */}
-        <div className="workspace-switcher">
-          <select
-            value={activeOrg?.id ?? ""}
-            onChange={(e) => {
-              const selected = organizations.find((o) => o.id === e.target.value);
-              if (selected) {
-                setActiveOrg(selected);
-                setUserRole(selected.role || "viewer");
-                notify(`Switched organization to ${selected.name}`);
-              }
-            }}
-          >
-            {organizations.map((org) => (
-              <option key={org.id} value={org.id}>
-                {org.name} ({org.role?.toUpperCase() || "MEMBER"})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <nav className="nav-list">
-          <p className="nav-label">Cash Command Center</p>
-          {visibleNav.map((item) => (
-            <button
-              className={`nav-item ${activeNav === item.label ? "active" : ""}`}
-              onClick={() => setActiveNav(item.label)}
-              key={item.label}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              {item.label}
-              {item.label === "Collections" && <span className="nav-count">{promises.length}</span>}
-            </button>
-          ))}
+        <nav className="nav">
+          {navItems.map((item) => {
+            const IconComp = item.icon;
+            const isActive = activeNav === item.name;
+            return (
+              <button
+                key={item.name}
+                className={`nav-item ${isActive ? "active" : ""}`}
+                onClick={() => handleTabChange(item.name)}
+              >
+                <span className="nav-icon">
+                  <IconComp size={17} color={isActive ? "#ffffff" : "#8f9b92"} />
+                </span>
+                <span>{item.name}</span>
+              </button>
+            );
+          })}
         </nav>
+
+        <div style={{ marginTop: "auto", padding: "14px", background: "rgba(255,255,255,0.03)", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <p style={{ margin: 0, fontSize: "10px", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Active Workspace</p>
+          <p style={{ margin: "4px 0 0", fontSize: "13px", fontWeight: 700, color: "#ffffff" }}>ABC Digital Solutions</p>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#1c8b69" }} />
+            <span style={{ fontSize: "11px", color: "#1c8b69", fontWeight: 600 }}>FastAPI + ML Feedback Engine</span>
+          </div>
+        </div>
       </aside>
 
-      <main className="main-content">
-        {/* Top bar with organization info & user menu */}
-        <header className="topbar">
-          <div className="breadcrumb">
-            <strong>{activeOrg?.name || "ABC Digital Solutions"}</strong>
-            <span className="slash">/</span>
-            <span>{activeNav}</span>
+      {/* Main Content Area */}
+      <main className="main">
+        {/* Header */}
+        <header className="header">
+          <div>
+            <h1 style={{ fontSize: "22px", fontWeight: 800, margin: 0, letterSpacing: "-0.8px", color: "var(--ink)" }}>
+              {activeNav}
+            </h1>
+            <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#7d8580" }}>
+              Enterprise Financial Intelligence & Cash Flow Optimizer
+            </p>
           </div>
-          <div className="top-actions">
-            <span className="role-pill">{userRole.toUpperCase()}</span>
-            <button className="icon-button notification" aria-label="Alerts" onClick={() => setActiveNav("Alerts")}>
-              🔔<i />
-            </button>
-            <div className="user-menu" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span className="signed-in">{user.email}</span>
-              <button className="avatar" title="Sign out" onClick={handleSignOut}>
-                {user.email?.slice(0, 2).toUpperCase() || "US"}
-              </button>
+
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            {/* User Profile Logo Avatar Icon Only */}
+            <div
+              onClick={() => setShowAuthModal(true)}
+              title={`${currentUser.full_name} (${currentUser.permissions?.role_name || currentUser.role})`}
+              style={{
+                width: "36px",
+                height: "36px",
+                borderRadius: "50%",
+                background: currentUser.permissions?.is_super_admin ? "#7c3aed" : "var(--orange, #e8793e)",
+                color: "#ffffff",
+                display: "grid",
+                placeItems: "center",
+                fontSize: "14px",
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(232, 121, 62, 0.35)",
+                border: "2px solid #ffffff",
+              }}
+            >
+              {currentUser.full_name ? currentUser.full_name.charAt(0).toUpperCase() : "U"}
             </div>
+
+            <button className="primary-button" onClick={() => setShowDatasetModal(true)} style={{ background: "#1e293b", boxShadow: "none" }}>
+              <IconDatasets size={15} color="#fff" /> Datasets
+            </button>
+
+            {currentUser.permissions?.can_create_invoice && (
+              <button className="primary-button" onClick={() => setShowNewInvoiceModal(true)}>
+                <IconPlus size={15} color="#fff" /> Create Invoice
+              </button>
+            )}
           </div>
         </header>
 
-        {/* 1. OVERVIEW SCREEN */}
+        {/* 1. OVERVIEW TAB */}
         {activeNav === "Overview" && (
-          <div className="content-wrap">
-            <section className="hero-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", padding: "20px", borderRadius: "12px", border: "1px solid #e0e0e0" }}>
-              <div>
-                <p className="eyebrow">FINANCIAL HEALTH INDEX</p>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <h1 style={{ fontSize: "32px", margin: 0 }}>Cash Health: 74 / 100</h1>
-                  <span style={{ background: "#fef3c7", color: "#d97706", fontWeight: 700, padding: "4px 12px", borderRadius: "20px", fontSize: "14px" }}>🟡 WATCH</span>
-                </div>
-                <p className="subheading" style={{ margin: "4px 0 0" }}>Projected runway is 42 days. Overdue collection action recommended.</p>
-              </div>
-              {hasPermission(userRole, "reports.export") && (
-                <button className="primary-button" onClick={() => handleExportReport("Executive_Cash_Health_Report")}>
-                  Export Report <Arrow />
-                </button>
-              )}
-            </section>
-
-            {/* Live Financial Metric Grid */}
-            <section className="metric-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "16px", marginTop: "20px" }}>
-              <article className="metric-card mint">
-                <div className="metric-top"><span>Cash Balance</span><Arrow /></div>
-                <strong>₹{(baseCashBalance / 100000).toFixed(1)}L</strong>
-                <p>Live calculated funds</p>
-              </article>
-              <article className="metric-card orange">
-                <div className="metric-top"><span>Receivables</span><Arrow /></div>
-                <strong>₹{(totalReceivables / 100000).toFixed(1)}L</strong>
-                <p>{invoices.filter((i) => i.status !== "Paid").length} open invoices</p>
-              </article>
-              <article className="metric-card urgent">
-                <div className="metric-top"><span>Overdue</span><Arrow /></div>
-                <strong style={{ color: "#cc5d5d" }}>₹{(totalOverdue / 100000).toFixed(1)}L</strong>
-                <p>{invoices.filter((i) => i.status === "Overdue").length} high-risk accounts</p>
-              </article>
-              <article className="metric-card cream">
-                <div className="metric-top"><span>Expenses</span><Arrow /></div>
-                <strong>₹{(expenses.reduce((acc, e) => acc + e.numericAmount, 0) / 100000).toFixed(1)}L</strong>
-                <p>{expenses.length} logged items</p>
-              </article>
-              <article className="metric-card blue">
-                <div className="metric-top"><span>Cash Runway</span><Arrow /></div>
-                <strong>42 Days</strong>
-                <p>+8 days vs last month</p>
-              </article>
-            </section>
-
-            {/* Priorities Center */}
-            <section className="priorities" style={{ marginTop: "24px" }}>
-              <div className="section-heading compact">
+          loadingData ? (
+            <SkeletonOverview />
+          ) : (
+            <div className="fade-in-content" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              {/* Cash Health Card (Step 13) */}
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <p className="eyebrow">NOISE DOWN, ACTION UP</p>
-                  <h2>TODAY&apos;S PRIORITIES</h2>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "1px", color: "#89938c" }}>Business Cash Health</span>
+                    <span style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 800, background: healthData.score >= 80 ? "rgba(28,139,105,0.12)" : healthData.score >= 60 ? "rgba(219,116,56,0.12)" : "rgba(204,93,93,0.12)", color: healthData.score >= 80 ? "var(--emerald)" : healthData.score >= 60 ? "var(--yellow)" : "var(--red)" }}>
+                      {healthData.score}/100 STATUS: {healthData.status}
+                    </span>
+                  </div>
+                  <p style={{ margin: "10px 0 0", fontSize: "14px", lineHeight: "1.5", color: "var(--ink)", fontWeight: 600 }}>
+                    {healthData.explanation}
+                  </p>
+                </div>
+                <div style={{ textAlign: "right", minWidth: "160px" }}>
+                  <div style={{ fontSize: "36px", fontWeight: 900, letterSpacing: "-1.5px", color: healthData.score >= 80 ? "var(--emerald)" : healthData.score >= 60 ? "var(--yellow)" : "var(--red)" }}>
+                    {healthData.score}/100
+                  </div>
+                  <span style={{ fontSize: "11px", color: "#888", fontWeight: 600 }}>ML Health Index</span>
                 </div>
               </div>
-              <div className="action-list" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                <div className="action-row urgent" style={{ padding: "16px", background: "#fff", borderLeft: "4px solid #cc5d5d", borderRadius: "8px" }}>
-                  <span className="action-icon">🔴</span>
-                  <div className="action-copy">
-                    <strong>Critical: ₹{(totalOverdue / 100000).toFixed(1)}L overdue receivables</strong>
-                    <span>High risk of delay past 30 days.</span>
-                  </div>
-                  <button className="row-action" onClick={() => setActiveNav("Collections")}>View & Act <Arrow /></button>
-                </div>
-                <div className="action-row warm" style={{ padding: "16px", background: "#fff", borderLeft: "4px solid #db7438", borderRadius: "8px" }}>
-                  <span className="action-icon">🟠</span>
-                  <div className="action-copy">
-                    <strong>Warning: ₹4.3L due within 3 days</strong>
-                    <span>Send courtesy reminder before due date.</span>
-                  </div>
-                  <button className="row-action" onClick={() => setActiveNav("Invoices")}>Review Invoices <Arrow /></button>
-                </div>
-              </div>
-            </section>
 
-            {/* Forecast Chart */}
-            <section className="forecast-panel" style={{ marginTop: "28px" }}>
-              <div className="forecast-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <span className="forecast-label">PROJECTED CASH POSITION ({range.toUpperCase()})</span>
-                  <strong style={{ fontSize: "28px", display: "block" }}>₹11.2L</strong>
-                  <p><span className="positive">↑ ₹2.8L</span> expected net inflow</p>
+              {/* Core KPI Metrics Grid */}
+              <div className="metrics-grid">
+                <div className="metric-card">
+                  <span className="metric-label">Cash Balance</span>
+                  <div className="metric-value">{metrics.cash_balance}</div>
+                  <span className="metric-note">Live Available Liquidity</span>
                 </div>
-                <div className="range-toggle" style={{ display: "flex", gap: "8px" }}>
-                  {(["30 days", "60 days", "90 days", "6 months"] as const).map((r) => (
-                    <button key={r} className={range === r ? "selected" : ""} onClick={() => setRange(r)}>
-                      {r}
-                    </button>
+
+                <div className="metric-card">
+                  <span className="metric-label">Total Receivables</span>
+                  <div className="metric-value">{metrics.receivables}</div>
+                  <span className="metric-note">{invoices.filter((i) => i.status !== "paid").length} Active Accounts</span>
+                </div>
+
+                <div className="metric-card" style={{ borderColor: "rgba(204,93,93,0.3)" }}>
+                  <span className="metric-label" style={{ color: "var(--red)" }}>Overdue Amount</span>
+                  <div className="metric-value" style={{ color: "var(--red)" }}>{metrics.overdue}</div>
+                  <span className="metric-note" style={{ color: "var(--red)" }}>Action Priority</span>
+                </div>
+
+                <div className="metric-card">
+                  <span className="metric-label">30-Day Forecast</span>
+                  <div className="metric-value" style={{ color: "var(--emerald)" }}>{forecastData.projected_balance}</div>
+                  <span className="metric-note">Net: {forecastData.change_from_today}</span>
+                </div>
+              </div>
+
+              {/* AI CFO Quick Query Panel */}
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px", boxShadow: "0 4px 20px rgba(0,0,0,0.03)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px" }}>
+                  <h2 style={{ fontSize: "17px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                    <IconAiCfo size={20} color="var(--emerald)" /> AI CFO Assistant
+                  </h2>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--emerald)", background: "rgba(28,139,105,0.1)", padding: "4px 10px", borderRadius: "12px" }}>
+                    LIVE BUSINESS ENGINE
+                  </span>
+                </div>
+
+                <form onSubmit={(e) => { e.preventDefault(); handleSendChatMessage(); }} style={{ display: "flex", gap: "10px" }}>
+                  <input
+                    type="text"
+                    value={aiQuestion}
+                    onChange={(e) => setAiQuestion(e.target.value)}
+                    placeholder="Ask AI CFO e.g. 'What is my cash runway?' or 'Who owes overdue payments?'"
+                    style={{ flex: 1, padding: "12px 16px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "8px", color: "var(--ink)", fontSize: "13px" }}
+                  />
+                  <button type="submit" className="primary-button" disabled={aiLoading}>
+                    {aiLoading ? "Consulting..." : "Ask AI CFO"}
+                  </button>
+                </form>
+
+                {aiLoading && (
+                  <div style={{ marginTop: "16px", padding: "16px" }}>
+                    <div className="skeleton-box" style={{ width: "30%", height: "14px" }} />
+                    <div className="skeleton-box" style={{ width: "90%", height: "20px", marginTop: "10px" }} />
+                  </div>
+                )}
+
+                {aiResponse && !aiLoading && (
+                  <div style={{ marginTop: "16px", padding: "18px 22px", background: "rgba(28, 139, 105, 0.08)", border: "1px solid rgba(28, 139, 105, 0.25)", borderRadius: "10px" }}>
+                    <div style={{ fontWeight: 800, color: "var(--emerald)", marginBottom: "8px", textTransform: "uppercase", fontSize: "11px", letterSpacing: "0.8px" }}>
+                      AI CFO Strategic Advice
+                    </div>
+                    <FormattedResponse content={aiResponse} />
+                  </div>
+                )}
+              </div>
+
+              {/* What Needs Attention (Step 6 & 13) */}
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+                <h3 style={{ fontSize: "16px", fontWeight: 800, margin: "0 0 16px", color: "var(--ink)" }}>What Needs Your Attention Today</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+                  <div style={{ padding: "16px", background: "rgba(204,93,93,0.06)", border: "1px solid rgba(204,93,93,0.2)", borderRadius: "10px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--red)", textTransform: "uppercase" }}>Overdue Receivables</div>
+                    <div style={{ fontSize: "20px", fontWeight: 800, margin: "6px 0", color: "var(--red)" }}>{metrics.overdue}</div>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#666" }}>High risk collection priority</p>
+                  </div>
+
+                  <div style={{ padding: "16px", background: "rgba(219,116,56,0.06)", border: "1px solid rgba(219,116,56,0.2)", borderRadius: "10px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--yellow)", textTransform: "uppercase" }}>Due This Week</div>
+                    <div style={{ fontSize: "20px", fontWeight: 800, margin: "6px 0", color: "var(--ink)" }}>{metrics.due_this_week}</div>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#666" }}>Expected upcoming collections</p>
+                  </div>
+
+                  <div style={{ padding: "16px", background: "rgba(28,139,105,0.06)", border: "1px solid rgba(28,139,105,0.2)", borderRadius: "10px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--emerald)", textTransform: "uppercase" }}>Runway Estimate</div>
+                    <div style={{ fontSize: "20px", fontWeight: 800, margin: "6px 0", color: "var(--emerald)" }}>{metrics.cash_runway_days} Days</div>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#666" }}>Based on monthly burn rate</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Top Payment Risks Table (Step 3 & 13) */}
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                  <h3 style={{ fontSize: "16px", fontWeight: 800, margin: 0 }}>Top Customer Payment Risks</h3>
+                  <button onClick={() => setActiveNav("Collections")} style={{ fontSize: "12px", fontWeight: 700, color: "var(--orange)", background: "none", border: "none" }}>
+                    Open Action Center →
+                  </button>
+                </div>
+
+                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid var(--line)", color: "#89938c" }}>
+                      <th style={{ padding: "10px" }}>Customer</th>
+                      <th style={{ padding: "10px" }}>Outstanding</th>
+                      <th style={{ padding: "10px" }}>Avg Delay</th>
+                      <th style={{ padding: "10px" }}>Expected Delay Range</th>
+                      <th style={{ padding: "10px" }}>Late Probability</th>
+                      <th style={{ padding: "10px" }}>Risk Score</th>
+                      <th style={{ padding: "10px" }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agingData.customer_risk.map((c: any) => (
+                      <tr key={c.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                        <td style={{ padding: "12px", fontWeight: 700 }}>{c.name}</td>
+                        <td style={{ padding: "12px", fontWeight: 700 }}>{c.outstanding}</td>
+                        <td style={{ padding: "12px" }}>{c.avg_delay_days} days</td>
+                        <td style={{ padding: "12px", color: "#666", fontWeight: 600 }}>{c.expected_delay_range || "15–30 days"}</td>
+                        <td style={{ padding: "12px", fontWeight: 700, color: c.late_probability > 70 ? "var(--red)" : "var(--ink)" }}>{c.late_probability}%</td>
+                        <td style={{ padding: "12px" }}>
+                          <span style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, background: c.score >= 80 ? "rgba(28,139,105,0.15)" : c.score >= 50 ? "rgba(219,116,56,0.15)" : "rgba(204,93,93,0.15)", color: c.score >= 80 ? "var(--emerald)" : c.score >= 50 ? "var(--yellow)" : "var(--red)" }}>
+                            {c.score}/100 ({c.risk})
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px" }}>
+                          <button
+                            onClick={() => openRecordPromise(c.name, "", c.outstanding)}
+                            style={{ padding: "5px 10px", fontSize: "11px", fontWeight: 700, borderRadius: "6px", border: "1px solid var(--line)", background: "#fafbf8" }}
+                          >
+                            Promise to Pay
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* 2. CASH FLOW TAB */}
+        {activeNav === "Cash Flow" && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "28px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                  <div>
+                    <h2 style={{ fontSize: "20px", fontWeight: 800, margin: 0 }}>Cash Flow Projection & Shortage Monitor</h2>
+                    <p style={{ fontSize: "13px", color: "#7d8580", margin: "4px 0 0" }}>
+                      Projected inflows (invoices + promises to pay) vs. operating outflows.
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    {(["30 days", "60 days", "90 days", "6 months"] as const).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setRange(r)}
+                        style={{ padding: "8px 14px", fontSize: "12px", fontWeight: 700, borderRadius: "6px", border: "none", background: range === r ? "#1e293b" : "#f0f1ec", color: range === r ? "#fff" : "#666" }}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                  <div style={{ padding: "20px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#888", textTransform: "uppercase" }}>Expected Collections</span>
+                    <div style={{ fontSize: "24px", fontWeight: 800, margin: "6px 0", color: "var(--emerald)" }}>{forecastData.expected_inflow || "₹18,00,000"}</div>
+                    <span style={{ fontSize: "11px", color: "#666" }}>Invoices + Promises to Pay</span>
+                  </div>
+
+                  <div style={{ padding: "20px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#888", textTransform: "uppercase" }}>Expected Outflows</span>
+                    <div style={{ fontSize: "24px", fontWeight: 800, margin: "6px 0", color: "var(--red)" }}>{forecastData.expected_outflow || "₹21,00,000"}</div>
+                    <span style={{ fontSize: "11px", color: "#666" }}>Salaries, Rent & Subscriptions</span>
+                  </div>
+
+                  <div style={{ padding: "20px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#888", textTransform: "uppercase" }}>Projected Ending Balance</span>
+                    <div style={{ fontSize: "24px", fontWeight: 800, margin: "6px 0", color: "var(--ink)" }}>{forecastData.projected_balance}</div>
+                    <span style={{ fontSize: "11px", color: "#666" }}>Model Confidence {forecastData.confidence}%</span>
+                  </div>
+                </div>
+
+                {/* Timeline chart points */}
+                <h3 style={{ fontSize: "15px", fontWeight: 800, margin: "0 0 14px" }}>Projected Cash Balance Timeline</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px" }}>
+                  {(forecastData.timeline_points || []).map((pt: any, i: number) => (
+                    <div key={i} style={{ padding: "16px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "8px", textAlign: "center" }}>
+                      <div style={{ fontSize: "12px", fontWeight: 700, color: "#888" }}>{pt.date}</div>
+                      <div style={{ fontSize: "16px", fontWeight: 800, margin: "8px 0", color: "var(--ink)" }}>₹{pt.projected.toLocaleString("en-IN")}</div>
+                      <div style={{ fontSize: "11px", color: "var(--emerald)", fontWeight: 600 }}>+₹{pt.inflow.toLocaleString("en-IN")}</div>
+                      <div style={{ fontSize: "11px", color: "var(--red)", fontWeight: 600 }}>-₹{pt.outflow.toLocaleString("en-IN")}</div>
+                    </div>
                   ))}
                 </div>
               </div>
-              <div className="chart" style={{ height: "220px", marginTop: "16px", position: "relative" }}>
-                <div className="grid-line line-1"><span>₹15L</span></div>
-                <div className="grid-line line-2"><span>₹10L</span></div>
-                <div className="grid-line line-3"><span>₹5L</span></div>
-                <div className="grid-line line-4"><span>₹0</span></div>
-                <div className="chart-fill" />
-                <div className="chart-line" />
-                <div className="today-line"><span>Today</span></div>
-                <div className="chart-labels">
-                  <span>Past 30 days</span>
-                  <span>Today</span>
-                  <span>+15 days</span>
-                  <span>+30 days</span>
-                  <span>+60 days</span>
-                  <span>Future</span>
-                </div>
-              </div>
-            </section>
-          </div>
+            </div>
+          )
         )}
 
-        {/* 2. CASH FLOW FORECAST SCREEN */}
-        {activeNav === "Cash Flow" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">PREDICTIVE SIMULATOR</p>
-                <h1>Cash Flow Forecast</h1>
-                <p>Model inflows, outflows, and customer payment delays in real time.</p>
-              </div>
-            </div>
-            <div className="scenario-card" style={{ padding: "20px", background: "#fff", borderRadius: "12px", border: "1px solid #e0e0e0" }}>
-              <h3>Scenario Simulator Controls</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "12px" }}>
-                <label>
-                  Customer payments delayed by:
-                  <select value={delayDays} onChange={(e) => setDelayDays(e.target.value)}>
-                    <option value="0">0 days (On time)</option>
-                    <option value="15">15 days late</option>
-                    <option value="30">30 days late</option>
-                    <option value="60">60 days late</option>
-                  </select>
-                </label>
-                <label>
-                  Delayed Amount:
-                  <input type="number" value={delayAmount} onChange={(e) => setDelayAmount(e.target.value)} />
-                </label>
-              </div>
-              <button
-                className="primary-button"
-                style={{ marginTop: "16px" }}
-                onClick={() => {
-                  const days = 42 - Math.floor(Number(delayDays) * 0.4);
-                  setSimulatedRunway(`${days} days`);
-                }}
-              >
-                Run What-If Simulation <Arrow />
-              </button>
-              {simulatedRunway && (
-                <div style={{ marginTop: "16px", padding: "12px", background: "#fffbe6", borderLeft: "4px solid #d97706" }}>
-                  <strong>Simulation Result:</strong> With ₹{Number(delayAmount).toLocaleString("en-IN")} delayed by {delayDays} days, your cash runway reduces to <strong>{simulatedRunway}</strong>.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* 3. INVOICES SCREEN (WITH REAL NEW INVOICE MODAL & MARK PAID ACTIONS) */}
+        {/* 3. INVOICES TAB */}
         {activeNav === "Invoices" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">RECEIVABLES MANAGEMENT</p>
-                <h1>Invoices</h1>
-                <p>Lifecycle transitions: Draft → Sent → Viewed → Partially Paid → Paid / Overdue.</p>
-              </div>
-              {hasPermission(userRole, "invoice.create") && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
+                <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>All Invoices ({invoices.length})</h2>
                 <button className="primary-button" onClick={() => setShowNewInvoiceModal(true)}>
-                  Create Invoice <span>+</span>
+                  <IconPlus size={15} color="#fff" /> New Invoice
                 </button>
-              )}
-            </div>
-            <div className="table-card">
-              <div className="table-header">
-                <h2>Invoice Lifecycle Queue</h2>
-                <span>Total Receivables: <strong>₹{(totalReceivables / 100000).toFixed(2)}L</strong></span>
               </div>
-              {invoices.map((inv) => (
-                <div className="table-row invoice-row" key={inv.id}>
-                  <div>
-                    <strong>{inv.id}</strong>
-                    <span>{inv.customer} · {inv.due}</span>
-                  </div>
-                  <strong>{inv.amount}</strong>
-                  <span className={`status-${inv.status === "Overdue" ? "bad" : inv.status === "Paid" ? "good" : "warm"}`}>{inv.status}</span>
-                  {hasPermission(userRole, "invoice.edit") && inv.status !== "Paid" && (
-                    <button className="row-action" onClick={() => handleMarkInvoicePaid(inv.id)}>
-                      Mark Paid <Arrow />
-                    </button>
-                  )}
-                  {inv.status === "Paid" && (
-                    <span style={{ fontSize: "11px", color: "#1c8b69", fontWeight: 700 }}>✓ Reconciled</span>
-                  )}
-                </div>
-              ))}
+
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--line)", color: "#89938c" }}>
+                    <th style={{ padding: "12px" }}>Invoice #</th>
+                    <th style={{ padding: "12px" }}>Customer</th>
+                    <th style={{ padding: "12px" }}>Amount</th>
+                    <th style={{ padding: "12px" }}>Due Date</th>
+                    <th style={{ padding: "12px" }}>Status</th>
+                    <th style={{ padding: "12px" }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => (
+                    <tr key={inv.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{inv.invoice_number}</td>
+                      <td style={{ padding: "12px" }}>{inv.customer_name}</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>₹{inv.amount.toLocaleString("en-IN")}</td>
+                      <td style={{ padding: "12px" }}>{inv.due_date}</td>
+                      <td style={{ padding: "12px" }}>
+                        <span style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: inv.status === "paid" ? "rgba(28,139,105,0.15)" : inv.status === "overdue" ? "rgba(204,93,93,0.15)" : "rgba(219,116,56,0.15)", color: inv.status === "paid" ? "var(--emerald)" : inv.status === "overdue" ? "var(--red)" : "var(--yellow)" }}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px", display: "flex", gap: "8px" }}>
+                        <button
+                          onClick={() => handleToggleInvoiceStatus(inv.id, inv.status)}
+                          style={{ padding: "5px 10px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "1px solid var(--line)", background: "#fafbf8" }}
+                        >
+                          {inv.status === "paid" ? "Mark Open" : "Mark Paid (Run ML)"}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteInvoice(inv.id)}
+                          style={{ padding: "5px 10px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "none", background: "rgba(204,93,93,0.15)", color: "var(--red)" }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
+          )
         )}
 
-        {/* 4. CUSTOMERS & RISK TABLE (WITH REAL ADD CUSTOMER MODAL) */}
+        {/* 4. CUSTOMERS TAB */}
         {activeNav === "Customers" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">RELATIONSHIP INTELLIGENCE</p>
-                <h1>Customers & Payment Risk Matrix</h1>
-                <p>Click any customer to inspect financial history & AI explanations.</p>
-              </div>
-              {hasPermission(userRole, "customer.edit") && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
+                <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>Customer Behavior & Payment Histories</h2>
                 <button className="primary-button" onClick={() => setShowAddCustomerModal(true)}>
-                  Add Customer <span>+</span>
+                  <IconPlus size={15} color="#fff" /> Add Customer
                 </button>
-              )}
-            </div>
-            <div className="table-card">
-              <div className="table-header">
-                <h2>Customer Risk Breakdown</h2>
               </div>
-              {databaseCustomers.map((cust) => (
-                <div
-                  className="table-row"
-                  key={cust.name}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => setSelectedCustomer(cust)}
-                >
-                  <span className="customer-avatar" style={{ backgroundColor: cust.color }}>{cust.initials}</span>
-                  <div style={{ flex: 1 }}>
-                    <strong>{cust.name}</strong>
-                    <br />
-                    <small>{cust.invoice} · {cust.days}</small>
-                  </div>
-                  <span className={`status-${cust.score < 50 ? "bad" : cust.score < 75 ? "warm" : "good"}`}>
-                    {cust.score < 50 ? "🔴 High Risk" : cust.score < 75 ? "🟡 Medium Risk" : "🟢 Low Risk"}
-                  </span>
-                  <strong>{cust.score}/100 Score</strong>
-                </div>
-              ))}
-            </div>
 
-            {/* Customer Detail Drawer */}
-            {selectedCustomer && (
-              <div className="detail-card" style={{ marginTop: "20px", padding: "20px", background: "#fff", borderRadius: "12px", border: "1px solid #e0e0e0" }}>
-                <p className="eyebrow">CUSTOMER FINANCIAL PROFILE</p>
-                <h2>{selectedCustomer.name}</h2>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", margin: "16px 0" }}>
-                  <div><small>Outstanding</small><br /><strong>{selectedCustomer.outstanding}</strong></div>
-                  <div><small>Avg Delay</small><br /><strong>24 days</strong></div>
-                  <div><small>Email</small><br /><strong>{selectedCustomer.email || "N/A"}</strong></div>
-                  <div><small>Reliability</small><br /><strong>{selectedCustomer.score}/100</strong></div>
-                </div>
-                <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "6px", marginBottom: "16px" }}>
-                  <strong>AI Explanation:</strong> Payment delays increased by 14 days during the last 4 invoices due to quarterly client billing shifts.
-                </div>
-                {hasPermission(userRole, "collections.manage") && (
-                  <button className="primary-button" onClick={() => notify(`Payment reminder email & SMS sent to ${selectedCustomer.name}!`)}>
-                    Send Reminder Today <Arrow />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--line)", color: "#89938c" }}>
+                    <th style={{ padding: "12px" }}>Customer Name</th>
+                    <th style={{ padding: "12px" }}>Contact</th>
+                    <th style={{ padding: "12px" }}>Outstanding</th>
+                    <th style={{ padding: "12px" }}>Avg Payment Delay</th>
+                    <th style={{ padding: "12px" }}>Late Probability</th>
+                    <th style={{ padding: "12px" }}>Payment Score</th>
+                    <th style={{ padding: "12px" }}>Risk Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {customers.map((c) => (
+                    <tr key={c.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{c.name}</td>
+                      <td style={{ padding: "12px", color: "#666" }}>{c.email || c.phone || "N/A"}</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>₹{c.outstanding_amount.toLocaleString("en-IN")}</td>
+                      <td style={{ padding: "12px" }}>{c.avg_payment_delay_days || 15} days</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{c.late_probability || 50}%</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{c.payment_score}/100</td>
+                      <td style={{ padding: "12px" }}>
+                        <span style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: c.risk_level === "high" ? "rgba(204,93,93,0.15)" : c.risk_level === "medium" ? "rgba(219,116,56,0.15)" : "rgba(28,139,105,0.15)", color: c.risk_level === "high" ? "var(--red)" : c.risk_level === "medium" ? "var(--yellow)" : "var(--emerald)" }}>
+                          {c.risk_level}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
         )}
 
-        {/* 5. PAYMENTS SCREEN */}
+        {/* 5. PAYMENTS TAB */}
         {activeNav === "Payments" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">RECONCILIATION & CASH INFLOWS</p>
-                <h1>Payments Received</h1>
-                <p>Match payments to open invoices and update cash position model.</p>
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
+                  <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>Promises to Pay Ledger ({promises.length})</h2>
+                  <button className="primary-button" onClick={() => openRecordPromise()}>
+                    <IconPlus size={15} color="#fff" /> Record Promise
+                  </button>
+                </div>
+
+                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid var(--line)", color: "#89938c" }}>
+                      <th style={{ padding: "12px" }}>Customer</th>
+                      <th style={{ padding: "12px" }}>Invoice #</th>
+                      <th style={{ padding: "12px" }}>Promised Amount</th>
+                      <th style={{ padding: "12px" }}>Promised Date</th>
+                      <th style={{ padding: "12px" }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {promises.map((p) => (
+                      <tr key={p.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                        <td style={{ padding: "12px", fontWeight: 700 }}>{p.customer_name}</td>
+                        <td style={{ padding: "12px" }}>{p.invoice_number || "N/A"}</td>
+                        <td style={{ padding: "12px", fontWeight: 700 }}>₹{p.amount.toLocaleString("en-IN")}</td>
+                        <td style={{ padding: "12px" }}>{p.promised_date}</td>
+                        <td style={{ padding: "12px" }}>
+                          <span style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: "rgba(28,139,105,0.15)", color: "var(--emerald)" }}>
+                            {p.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div className="workflow-card">
-              <div className="workflow-stat"><span>Matched This Month</span><strong>₹18.4L</strong></div>
-              <div className="workflow-stat"><span>Pending Match</span><strong>₹1.2L</strong></div>
-              <div className="workflow-stat"><span>Reconciliation Rate</span><strong>94%</strong></div>
-            </div>
-          </div>
+          )
         )}
 
-        {/* 6. EXPENSES SCREEN (WITH REAL ADD EXPENSE MODAL) */}
+        {/* 6. EXPENSES TAB */}
         {activeNav === "Expenses" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">OUTFLOW MANAGEMENT</p>
-                <h1>Expenses</h1>
-                <p>Track recurring operating expenses and AI unusual spending flags.</p>
-              </div>
-              {hasPermission(userRole, "expense.create") && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
+                <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>Business Expenses & Outflows ({expenses.length})</h2>
                 <button className="primary-button" onClick={() => setShowAddExpenseModal(true)}>
-                  Add Expense <span>+</span>
+                  <IconPlus size={15} color="#fff" /> Log Expense
                 </button>
-              )}
+              </div>
+
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--line)", color: "#89938c" }}>
+                    <th style={{ padding: "12px" }}>Category</th>
+                    <th style={{ padding: "12px" }}>Supplier</th>
+                    <th style={{ padding: "12px" }}>Amount</th>
+                    <th style={{ padding: "12px" }}>Date</th>
+                    <th style={{ padding: "12px" }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expenses.map((e) => (
+                    <tr key={e.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{e.category}</td>
+                      <td style={{ padding: "12px" }}>{e.supplier_name}</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>₹{e.amount.toLocaleString("en-IN")}</td>
+                      <td style={{ padding: "12px" }}>{e.expense_date}</td>
+                      <td style={{ padding: "12px" }}>
+                        {e.is_unusual && <span style={{ fontSize: "10px", fontWeight: 700, background: "rgba(204,93,93,0.15)", color: "var(--red)", padding: "3px 8px", borderRadius: "4px", marginRight: "8px" }}>UNUSUAL SURGE</span>}
+                        <span style={{ fontWeight: 600 }}>{e.payment_status}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="table-card">
-              <div className="table-header"><h2>Expense Log</h2></div>
-              {expenses.map((exp) => (
-                <div className="table-row" key={exp.id}>
-                  <div>
-                    <strong>{exp.category}</strong>
-                    <span>{exp.supplier} · {exp.date}</span>
-                  </div>
-                  {exp.isUnusual && <span style={{ color: "#cc5d5d", fontWeight: 600 }}>⚠️ Unusual +27%</span>}
-                  <strong>{exp.amount}</strong>
-                </div>
-              ))}
-            </div>
-          </div>
+          )
         )}
 
-        {/* 7. SUPPLIERS SCREEN (WITH REAL ADD SUPPLIER MODAL) */}
+        {/* 7. SUPPLIERS TAB */}
         {activeNav === "Suppliers" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">SUPPLIER CREDIT MANAGEMENT</p>
-                <h1>Suppliers & Credit Terms</h1>
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
+                <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>Suppliers & Credit Terms</h2>
               </div>
-              {hasPermission(userRole, "supplier.manage") && (
-                <button className="primary-button" onClick={() => setShowAddSupplierModal(true)}>
-                  Add Supplier <span>+</span>
-                </button>
-              )}
+
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--line)", color: "#89938c" }}>
+                    <th style={{ padding: "12px" }}>Supplier Name</th>
+                    <th style={{ padding: "12px" }}>Credit Terms</th>
+                    <th style={{ padding: "12px" }}>Vendor Score</th>
+                    <th style={{ padding: "12px" }}>Total Spend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suppliers.map((s) => (
+                    <tr key={s.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{s.name}</td>
+                      <td style={{ padding: "12px" }}>{s.credit_days} days credit</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>{s.score}/100</td>
+                      <td style={{ padding: "12px", fontWeight: 700 }}>₹{s.total_spend.toLocaleString("en-IN")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="table-card">
-              {suppliers.map((s) => (
-                <div className="table-row" key={s.id}>
-                  <div><strong>{s.name}</strong><span>Credit Terms: {s.creditDays} days</span></div>
-                  <strong>Total Spend: {s.totalSpend}</strong>
-                  <span className="status-good">{s.score}/100 Reliability</span>
+          )
+        )}
+
+        {/* 8. COLLECTIONS ACTION CENTER TAB */}
+        {activeNav === "Collections" && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                  <div>
+                    <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>Collections Action Center</h2>
+                    <p style={{ fontSize: "13px", color: "var(--red)", fontWeight: 700, margin: "4px 0 0" }}>
+                      {collectionsPriorities.summary || "Priority recovery actions"}
+                    </p>
+                  </div>
                 </div>
-              ))}
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                  {(collectionsPriorities.items || []).map((item: any) => (
+                    <div key={item.invoice_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <strong style={{ fontSize: "15px" }}>{item.customer_name}</strong>
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--red)" }}>{item.amount}</span>
+                          <span style={{ fontSize: "11px", color: "#888" }}>{item.days_overdue} days overdue</span>
+                        </div>
+                        <p style={{ margin: "6px 0 0", fontSize: "12px", color: "#666" }}>
+                          Invoice {item.invoice_number} · Avg Delay {item.avg_delay} days · Payment Score {item.risk_score}/100
+                        </p>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <button
+                          onClick={() => openSendReminder(item)}
+                          className="primary-button"
+                          style={{ padding: "8px 14px", fontSize: "12px" }}
+                        >
+                          <IconSend size={14} color="#fff" /> Send Reminder
+                        </button>
+                        <button
+                          onClick={() => openRecordPromise(item.customer_name, item.invoice_number, item.amount)}
+                          style={{ padding: "8px 14px", fontSize: "12px", fontWeight: 700, borderRadius: "8px", border: "1px solid var(--line)", background: "#fff", cursor: "pointer" }}
+                        >
+                          Record Promise
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
+          )
         )}
 
-        {/* 8. ANALYTICS SCREEN */}
+        {/* 9. ANALYTICS TAB */}
         {activeNav === "Analytics" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">EXECUTIVE METRICS</p>
-                <h1>Financial Analytics</h1>
-                <p>Revenue growth, DSO (Days Sales Outstanding), and customer concentration.</p>
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "28px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, margin: "0 0 16px" }}>Machine Learning Analytics & Behavior Insights</h2>
+              <p style={{ fontSize: "13px", color: "#666", marginBottom: "24px" }}>
+                Analysis of customer delay probabilities, payment histories, and feedback loops.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+                <div style={{ padding: "20px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                  <h4 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 800 }}>Risk Level Breakdown</h4>
+                  <p style={{ fontSize: "13px", color: "#555" }}>High Risk Accounts: <strong>{customers.filter(c => c.risk_level === "high").length}</strong></p>
+                  <p style={{ fontSize: "13px", color: "#555" }}>Medium Risk Accounts: <strong>{customers.filter(c => c.risk_level === "medium").length}</strong></p>
+                  <p style={{ fontSize: "13px", color: "#555" }}>Low Risk Accounts: <strong>{customers.filter(c => c.risk_level === "low").length}</strong></p>
+                </div>
+                <div style={{ padding: "20px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                  <h4 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 800 }}>Collection Model Accuracy</h4>
+                  <p style={{ fontSize: "13px", color: "#555" }}>ML Prediction Model Confidence: <strong>88%</strong></p>
+                  <p style={{ fontSize: "13px", color: "#555" }}>Feedback Loop Executions: <strong>Active</strong></p>
+                </div>
               </div>
             </div>
-            <div className="workflow-card">
-              <div className="workflow-stat"><span>DSO (Collection Time)</span><strong>38 Days</strong></div>
-              <div className="workflow-stat"><span>Top 5 Concentration</span><strong>64%</strong></div>
-              <div className="workflow-stat"><span>Monthly Revenue Growth</span><strong>+14.2%</strong></div>
-            </div>
-          </div>
+          )
         )}
 
-        {/* 9. AI CFO AGENT SCREEN */}
-        {activeNav === "AI CFO" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">DATABASE-AWARE CFO AGENT</p>
-                <h1>AI CFO Workspace</h1>
-                <p>Ask natural language questions evaluated against your live database tables.</p>
-              </div>
-            </div>
-            <div className="scenario-card" style={{ padding: "20px", background: "#fff", borderRadius: "12px", border: "1px solid #e0e0e0" }}>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
-                {[
-                  "Why did my cash decrease?",
-                  "Which customers should I contact today?",
-                  "Can I afford to hire two employees?",
-                  "What are my biggest financial risks?",
-                ].map((q) => (
+        {/* 10. AI CFO AGENT INTERACTIVE CHAT PAGE */}
+        {activeNav === "AI CFO Agent" && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)", background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.03)" }}>
+              {/* Chat Header */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: "1px solid var(--line)", background: "#fafbf8" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#1e293b", display: "grid", placeItems: "center" }}>
+                    <IconAiCfo size={20} color="#ffffff" />
+                  </div>
+                  <div>
+                    <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, color: "var(--ink)" }}>AI CFO Assistant</h2>
+                    <span style={{ fontSize: "11px", color: "var(--emerald)", fontWeight: 700 }}>Real-Time Financial Intelligence Engine</span>
+                  </div>
+                </div>
+
+                <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
                   <button
-                    key={q}
-                    className="text-button"
-                    style={{ background: "#f1f5f9", padding: "6px 12px", borderRadius: "16px" }}
-                    onClick={() => {
-                      setAiQuestion(q);
-                      askAiCfo(q);
+                    onClick={() => setChatMessages([{ id: "init-1", sender: "cfo", text: "### **AI CFO Assistant**\n\nHello! I am your **AI CFO Assistant**. How can I help you analyze cash flow, track receivables, or optimize expenses today?", time: "Just now" }])}
+                    style={{ padding: "6px 12px", fontSize: "11px", fontWeight: 700, borderRadius: "6px", border: "1px solid var(--line)", background: "#fff", cursor: "pointer" }}
+                  >
+                    Clear Chat Thread
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Thread Area */}
+              <div ref={chatThreadRef} style={{ flex: 1, minHeight: 0, padding: "24px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "18px", background: "#fafbf8" }}>
+                {chatMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: msg.sender === "user" ? "flex-end" : "flex-start",
+                      maxWidth: "85%",
+                      alignSelf: msg.sender === "user" ? "flex-end" : "flex-start",
                     }}
                   >
-                    {q}
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#888", marginBottom: "4px" }}>
+                      {msg.sender === "user" ? "You" : "AI CFO Assistant"} · {msg.time}
+                    </div>
+
+                    <div
+                      style={{
+                        padding: "16px 20px",
+                        borderRadius: msg.sender === "user" ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
+                        background: msg.sender === "user" ? "#1e293b" : "#ffffff",
+                        color: msg.sender === "user" ? "#ffffff" : "var(--ink)",
+                        border: msg.sender === "user" ? "none" : "1px solid var(--line)",
+                        boxShadow: "0 2px 10px rgba(0,0,0,0.03)",
+                      }}
+                    >
+                      {msg.sender === "user" ? (
+                        <p style={{ margin: 0, fontSize: "14px", lineHeight: "1.5" }}>{msg.text}</p>
+                      ) : (
+                        <FormattedResponse content={msg.text} />
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {aiLoading && (
+                  <div style={{ alignSelf: "flex-start", maxWidth: "70%" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#888", marginBottom: "4px" }}>AI CFO Assistant</div>
+                    <div style={{ padding: "16px 20px", borderRadius: "14px", background: "#ffffff", border: "1px solid var(--line)" }}>
+                      <div className="skeleton-box" style={{ width: "120px", height: "14px" }} />
+                      <div className="skeleton-box" style={{ width: "240px", height: "18px", marginTop: "8px" }} />
+                    </div>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Quick Prompt Pills & Input Form */}
+              <div style={{ padding: "16px 24px", borderTop: "1px solid var(--line)", background: "#ffffff" }}>
+                <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "10px" }}>
+                  {[
+                    "What is my cash runway?",
+                    "Who owes overdue payments?",
+                    "Give me a full business audit",
+                    "Audit CloudHost expense surge",
+                  ].map((pill) => (
+                    <button
+                      key={pill}
+                      onClick={() => handleSendChatMessage(pill)}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        borderRadius: "20px",
+                        border: "1px solid var(--line)",
+                        background: "#fafbf8",
+                        color: "var(--ink)",
+                        whiteSpace: "nowrap",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {pill}
+                    </button>
+                  ))}
+                </div>
+
+                <form onSubmit={(e) => { e.preventDefault(); handleSendChatMessage(); }} style={{ display: "flex", gap: "10px" }}>
+                  <input
+                    type="text"
+                    value={aiQuestion}
+                    onChange={(e) => setAiQuestion(e.target.value)}
+                    placeholder="Type your question to AI CFO Assistant..."
+                    style={{ flex: 1, padding: "12px 16px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "8px", fontSize: "14px", color: "var(--ink)" }}
+                  />
+                  <button type="submit" className="primary-button" disabled={aiLoading || !aiQuestion.trim()}>
+                    <IconSend size={15} color="#fff" /> Send
                   </button>
+                </form>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* 11. ALERTS TAB */}
+        {activeNav === "Alerts" && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "28px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, margin: "0 0 20px" }}>Real-Time System Alerts & Anomaly Warnings</h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {alertsList.map((alt) => (
+                  <div key={alt.id} style={{ display: "flex", alignItems: "center", gap: "14px", padding: "18px", background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                    <IconWarning size={20} color={alt.urgency === "High" ? "var(--red)" : "var(--yellow)"} />
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 800 }}>{alt.title}</h4>
+                      <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#666" }}>{alt.description}</p>
+                    </div>
+                  </div>
                 ))}
               </div>
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input
-                  type="text"
-                  value={aiQuestion}
-                  onChange={(e) => setAiQuestion(e.target.value)}
-                  placeholder="Ask your AI CFO any financial question..."
-                  style={{ flex: 1, padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
-                />
-                <button className="primary-button" onClick={() => askAiCfo()}>
-                  Ask AI CFO <Arrow />
-                </button>
-              </div>
-              {aiResponse && (
-                <div style={{ marginTop: "16px", padding: "16px", background: "#f8fafc", borderRadius: "8px", borderLeft: "4px solid #1c8b69" }}>
-                  <strong>AI CFO Recommendation:</strong>
-                  <p style={{ marginTop: "6px", whiteSpace: "pre-line" }}>{aiResponse}</p>
-                </div>
-              )}
             </div>
-          </div>
+          )
         )}
 
-        {/* 10. DEDICATED COLLECTIONS & PAYMENT PROMISE SYSTEM */}
-        {activeNav === "Collections" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">DEDICATED COLLECTIONS CENTER</p>
-                <h1>Collections & Promises to Pay</h1>
-                <p>Track customer payment commitments and missed promise dates.</p>
-              </div>
-              {hasPermission(userRole, "collections.manage") && (
-                <button className="primary-button" onClick={() => setShowAddPromiseModal(true)}>
-                  Record Payment Promise <span>+</span>
-                </button>
-              )}
-            </div>
-            <div className="workflow-card">
-              <div className="workflow-stat"><span>Total Overdue</span><strong className="negative">₹{(totalOverdue / 100000).toFixed(1)}L</strong></div>
-              <div className="workflow-stat"><span>At-Risk Exposure</span><strong>₹4.2L</strong></div>
-              <div className="workflow-stat"><span>Recovery Rate</span><strong className="positive">81%</strong></div>
-            </div>
-
-            <div className="table-card" style={{ marginTop: "20px" }}>
-              <div className="table-header"><h2>Active Promises to Pay</h2></div>
-              {promises.map((p) => (
-                <div className="table-row" key={p.id}>
-                  <div>
-                    <strong>{p.customerName}</strong>
-                    <span>Promised Date: {p.promisedDate}</span>
-                  </div>
-                  <strong>{p.amount}</strong>
-                  <span className={`status-${p.status === "missed" ? "bad" : "good"}`}>
-                    {p.status === "missed" ? "⚠️ Promise Missed" : "Pending Promise"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 11. ALERTS CENTER */}
-        {activeNav === "Alerts" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">AUTOMATED MONITORING</p>
-                <h1>Alerts Center</h1>
-              </div>
-            </div>
-            <div className="table-card">
-              <div className="table-row"><span>🔴 Critical: ₹2.4L invoice from Acme Cloudworks is 14 days overdue.</span></div>
-              <div className="table-row"><span>🟠 Warning: ₹4.2L supplier payment due in 3 days.</span></div>
-              <div className="table-row"><span>🔵 AI Insight: Unusual +27% software expense flagged.</span></div>
-            </div>
-          </div>
-        )}
-
-        {/* 12. REPORTS SCREEN */}
+        {/* 12. REPORTS TAB */}
         {activeNav === "Reports" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">EXPORTABLE FINANCIAL REPORTS</p>
-                <h1>Reports</h1>
-              </div>
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "28px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, margin: "0 0 16px" }}>Financial Reports & Statements</h2>
+              <p style={{ fontSize: "13px", color: "#666", marginBottom: "20px" }}>
+                Export structured financial reports and cash forecasts.
+              </p>
+              <button className="primary-button" onClick={handleExportDataset}>
+                <IconDownload size={15} color="#fff" /> Export Full Financial Report
+              </button>
             </div>
-            <div className="customer-grid">
-              {["Cash Flow Statement", "Receivables Aging Report", "Customer Risk Report", "Expense Breakdown"].map((rep) => (
-                <div className="customer-card" key={rep}>
-                  <strong>{rep}</strong>
-                  <button className="text-button" style={{ marginTop: "12px" }} onClick={() => handleExportReport(rep)}>
-                    Export CSV / PDF <Arrow />
+          )
+        )}
+
+        {/* 13. TEAM & RBAC PERMISSIONS TAB */}
+        {activeNav === "Team" && (
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              {/* Active User Card & Quick Role Switcher */}
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0, color: "var(--ink)" }}>Active User Session & Permissions</h2>
+                  <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#666" }}>
+                    Logged in as <strong>{currentUser.full_name}</strong> ({currentUser.email}) · Role: <strong style={{ color: currentUser.permissions?.is_super_admin ? "#7c3aed" : "var(--emerald)" }}>{currentUser.permissions?.role_name || currentUser.role}</strong> ({currentUser.permissions?.scope || "Organization"})
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button className="primary-button" onClick={() => setShowAuthModal(true)} style={{ background: "#1e293b" }}>
+                    Switch User / Login
+                  </button>
+                  <button className="primary-button" onClick={handleLogout} style={{ background: "#dc2626" }}>
+                    Logout
                   </button>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 13. TEAM MANAGEMENT */}
-        {activeNav === "Team" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">ORGANIZATION GOVERNANCE</p>
-                <h1>Team Management</h1>
-                <p>Invite members and assign 6-tier RBAC roles.</p>
               </div>
-              {hasPermission(userRole, "team.invite") && (
-                <button className="primary-button" onClick={() => setShowInviteModal(true)}>
-                  Invite Member <span>+</span>
-                </button>
+
+              {/* Team Members List */}
+              <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                  <div>
+                    <h3 style={{ fontSize: "16px", fontWeight: 800, margin: 0 }}>Organization Team Members ({dbUsersList.length})</h3>
+                    <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#666" }}>Real users authenticated via SQLite database (`users` table)</p>
+                  </div>
+                  {currentUser.permissions?.can_manage_users && (
+                    <button className="primary-button" onClick={() => setShowAddUserModal(true)}>
+                      <IconPlus size={14} color="#fff" /> Add Team Member
+                    </button>
+                  )}
+                </div>
+
+                <div className="table-responsive">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>User Name</th>
+                        <th>Email Address</th>
+                        <th>Assigned Role</th>
+                        <th>Scope</th>
+                        <th>Key Role Permissions</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dbUsersList.map((u) => (
+                        <tr key={u.id}>
+                          <td><strong>{u.full_name}</strong></td>
+                          <td>{u.email}</td>
+                          <td>
+                            <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: 800, background: u.permissions?.is_super_admin ? "rgba(124,58,237,0.1)" : "rgba(30,41,59,0.06)", color: u.permissions?.is_super_admin ? "#7c3aed" : "#1e293b" }}>
+                              {u.permissions?.role_name || u.role}
+                            </span>
+                          </td>
+                          <td>{u.permissions?.scope || "Organization"}</td>
+                          <td>
+                            <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                              {u.permissions?.can_create_invoice && <span style={{ fontSize: "10px", padding: "2px 6px", background: "#f0fdf4", color: "#166534", borderRadius: "4px", border: "1px solid #bbf7d0" }}>Invoices</span>}
+                              {u.permissions?.can_send_reminders && <span style={{ fontSize: "10px", padding: "2px 6px", background: "#eff6ff", color: "#1e40af", borderRadius: "4px", border: "1px solid #bfdbfe" }}>Collections</span>}
+                              {u.permissions?.can_manage_expenses && <span style={{ fontSize: "10px", padding: "2px 6px", background: "#fefce8", color: "#854d0e", borderRadius: "4px", border: "1px solid #fef08a" }}>Expenses</span>}
+                              {u.permissions?.can_edit_settings && <span style={{ fontSize: "10px", padding: "2px 6px", background: "#fcf2ff", color: "#86198f", borderRadius: "4px", border: "1px solid #f5d0fe" }}>Settings</span>}
+                              {u.permissions?.is_super_admin && <span style={{ fontSize: "10px", padding: "2px 6px", background: "#f3e8ff", color: "#6b21a8", borderRadius: "4px", border: "1px solid #e9d5ff" }}>SaaS Platform</span>}
+                            </div>
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => handleLogin(u.email, u.email.includes("saas") ? "supersecret123" : "password123")}
+                              style={{ padding: "4px 10px", fontSize: "11px", fontWeight: 700, borderRadius: "6px", border: "1px solid var(--line)", background: "#fafbf8", cursor: "pointer" }}
+                            >
+                              Login As
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Security & Audit Log Table */}
+              {currentUser.permissions?.can_view_audit_logs && (
+                <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "24px" }}>
+                  <h3 style={{ fontSize: "16px", fontWeight: 800, margin: "0 0 12px" }}>Platform Audit Logs & Security History</h3>
+                  <div className="table-responsive">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Timestamp</th>
+                          <th>User</th>
+                          <th>Role</th>
+                          <th>Action</th>
+                          <th>Target Resource</th>
+                          <th>Audit Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {auditLogsList.map((log) => (
+                          <tr key={log.id}>
+                            <td><span style={{ fontSize: "11px", color: "#777" }}>{log.created_at || "Just now"}</span></td>
+                            <td><strong>{log.user_name}</strong></td>
+                            <td><span style={{ fontSize: "11px", fontWeight: 700 }}>{log.user_role}</span></td>
+                            <td><span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "10px", fontWeight: 800, background: "#f1f5f9", color: "#334155" }}>{log.action}</span></td>
+                            <td>{log.resource}</td>
+                            <td><span style={{ fontSize: "12px", color: "#555" }}>{log.details}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
             </div>
-
-            <div className="table-card">
-              {teamMembers.map((tm) => (
-                <div className="table-row" key={tm.email}>
-                  <div><strong>{tm.email}</strong><span>Role: {tm.role.toUpperCase()}</span></div>
-                  <span className={`status-${tm.status === "Active" ? "good" : "warm"}`}>{tm.status}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          )
         )}
 
-        {/* 14. SETTINGS */}
+        {/* 14. SETTINGS TAB */}
         {activeNav === "Settings" && (
-          <div className="workspace-view">
-            <div className="workspace-heading">
-              <div>
-                <p className="eyebrow">ORGANIZATION CONTROL</p>
-                <h1>Settings & Governance</h1>
-              </div>
+          loadingData ? (
+            <SkeletonTablePage />
+          ) : (
+            <div className="fade-in-content" style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "14px", padding: "28px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, margin: "0 0 18px" }}>Organization Settings</h2>
+              <p style={{ color: "#555", fontSize: "14px" }}>Organization ID: org-1</p>
+              <p style={{ color: "#555", fontSize: "14px" }}>Industry: IT Services / Enterprise Agency</p>
+              <p style={{ color: "#555", fontSize: "14px" }}>Operating Currency: INR (₹)</p>
             </div>
-            <div className="settings-card">
-              <label>Organization Name<input defaultValue={activeOrg?.name || "ABC Digital Solutions"} disabled /></label>
-              <label>Active User Role<input value={userRole.toUpperCase()} disabled /></label>
-              <label className="toggle-row"><span>Enforce Database Row Level Security (RLS)</span><input type="checkbox" defaultChecked disabled /></label>
-              <label className="toggle-row"><span>6-Tier RBAC Permission Enforcement</span><input type="checkbox" defaultChecked disabled /></label>
+          )
+        )}
+
+        {/* --- MODALS --- */}
+        {/* Send Reminder Modal */}
+        {showReminderModal && selectedReminderItem && (
+          <div className="modal-overlay" onClick={() => setShowReminderModal(false)}>
+            <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+              <h2>Collection Workflow — Send Reminder</h2>
+              <p style={{ fontSize: "13px", color: "#666" }}>
+                Target: <strong>{selectedReminderItem.customer_name}</strong> (Invoice {selectedReminderItem.invoice_number} for {selectedReminderItem.amount})
+              </p>
+
+              <form onSubmit={handleSendReminderSubmit} className="modal-form">
+                <label>
+                  Communication Channel
+                  <select value={reminderChannel} onChange={(e: any) => setReminderChannel(e.target.value)}>
+                    <option value="whatsapp">WhatsApp Business</option>
+                    <option value="email">Email Notification</option>
+                    <option value="sms">SMS Reminder</option>
+                  </select>
+                </label>
+
+                <label>
+                  Generated Reminder Message
+                  <textarea
+                    rows={4}
+                    value={reminderMessage}
+                    onChange={(e) => setReminderMessage(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <div className="modal-actions">
+                  <button type="button" className="cancel-button" onClick={() => setShowReminderModal(false)}>Cancel</button>
+                  <button type="submit" className="primary-button">Approve & Send Reminder</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
 
-        {/* REAL INTERACTIVE MODALS */}
+        {/* Record Promise to Pay Modal */}
+        {showPromiseModal && (
+          <div className="modal-overlay" onClick={() => setShowPromiseModal(false)}>
+            <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+              <h2>Record Promise to Pay</h2>
+              <p style={{ fontSize: "13px", color: "#666" }}>
+                Log customer payment commitment to automatically update future cash forecasts.
+              </p>
 
-        {/* 1. NEW INVOICE MODAL */}
+              <form onSubmit={handleCreatePromiseSubmit} className="modal-form">
+                <label>
+                  Customer Name
+                  <input value={promiseCustomer} onChange={(e) => setPromiseCustomer(e.target.value)} required placeholder="e.g. ABC Ltd" />
+                </label>
+
+                <label>
+                  Invoice Number (Optional)
+                  <input value={promiseInvoice} onChange={(e) => setPromiseInvoice(e.target.value)} placeholder="e.g. INV-2841" />
+                </label>
+
+                <label>
+                  Promised Amount (₹)
+                  <input type="number" value={promiseAmount} onChange={(e) => setPromiseAmount(e.target.value)} required placeholder="e.g. 85000" />
+                </label>
+
+                <label>
+                  Promised Payment Date
+                  <input type="date" value={promiseDate} onChange={(e) => setPromiseDate(e.target.value)} required />
+                </label>
+
+                <div className="modal-actions">
+                  <button type="button" className="cancel-button" onClick={() => setShowPromiseModal(false)}>Cancel</button>
+                  <button type="submit" className="primary-button">Record Promise & Update Forecast</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* New Invoice Modal */}
         {showNewInvoiceModal && (
           <div className="modal-overlay" onClick={() => setShowNewInvoiceModal(false)}>
             <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Create New Invoice</h2>
-                <button className="modal-close" onClick={() => setShowNewInvoiceModal(false)}>×</button>
-              </div>
+              <h2>Create New Invoice</h2>
               <form onSubmit={handleCreateInvoice} className="modal-form">
                 <label>
-                  Invoice Reference Number
+                  Customer Name
+                  <input value={invCustomer} onChange={(e) => setInvCustomer(e.target.value)} required placeholder="e.g. Acme Cloudworks" />
+                </label>
+                <label>
+                  Invoice Number
                   <input value={invNumber} onChange={(e) => setInvNumber(e.target.value)} required />
                 </label>
                 <label>
-                  Customer Name
-                  <input
-                    value={invCustomer}
-                    onChange={(e) => setInvCustomer(e.target.value)}
-                    placeholder="e.g. Acme Cloudworks"
-                    required
-                  />
-                </label>
-                <label>
-                  Total Invoice Amount (₹)
-                  <input
-                    type="number"
-                    value={invAmount}
-                    onChange={(e) => setInvAmount(e.target.value)}
-                    placeholder="e.g. 150000"
-                    required
-                  />
+                  Amount (₹)
+                  <input type="number" value={invAmount} onChange={(e) => setInvAmount(e.target.value)} required placeholder="e.g. 125000" />
                 </label>
                 <label>
                   Due Date
@@ -1609,89 +2249,38 @@ export default function Home() {
                 </label>
                 <div className="modal-actions">
                   <button type="button" className="cancel-button" onClick={() => setShowNewInvoiceModal(false)}>Cancel</button>
-                  <button type="submit" className="primary-button">Create Invoice</button>
+                  <button type="submit" className="primary-button">Save Invoice</button>
                 </div>
               </form>
             </div>
           </div>
         )}
 
-        {/* 2. ADD EXPENSE MODAL */}
-        {showAddExpenseModal && (
-          <div className="modal-overlay" onClick={() => setShowAddExpenseModal(false)}>
-            <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Record New Expense</h2>
-                <button className="modal-close" onClick={() => setShowAddExpenseModal(false)}>×</button>
-              </div>
-              <form onSubmit={handleAddExpense} className="modal-form">
-                <label>
-                  Expense Category
-                  <select value={expCategory} onChange={(e) => setExpCategory(e.target.value)}>
-                    <option value="Cloud Hosting">Cloud Hosting & Infrastructure</option>
-                    <option value="Software Licenses">Software & Tools</option>
-                    <option value="Salaries & Payroll">Salaries & Payroll</option>
-                    <option value="Marketing & Ads">Marketing & Ads</option>
-                    <option value="Office Rent">Office Rent & Facilities</option>
-                    <option value="Consulting & Legal">Consulting & Legal</option>
-                  </select>
-                </label>
-                <label>
-                  Supplier / Vendor Name
-                  <input
-                    value={expSupplier}
-                    onChange={(e) => setExpSupplier(e.target.value)}
-                    placeholder="e.g. AWS India / DesignStack"
-                    required
-                  />
-                </label>
-                <label>
-                  Amount (₹)
-                  <input
-                    type="number"
-                    value={expAmount}
-                    onChange={(e) => setExpAmount(e.target.value)}
-                    placeholder="e.g. 75000"
-                    required
-                  />
-                </label>
-                <label>
-                  Expense Date
-                  <input type="text" value={expDate} onChange={(e) => setExpDate(e.target.value)} required />
-                </label>
-                <div className="modal-actions">
-                  <button type="button" className="cancel-button" onClick={() => setShowAddExpenseModal(false)}>Cancel</button>
-                  <button type="submit" className="primary-button">Save Expense</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* 3. ADD CUSTOMER MODAL */}
+        {/* Add Customer Modal */}
         {showAddCustomerModal && (
           <div className="modal-overlay" onClick={() => setShowAddCustomerModal(false)}>
             <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Add Customer</h2>
-                <button className="modal-close" onClick={() => setShowAddCustomerModal(false)}>×</button>
-              </div>
-              <form onSubmit={handleAddCustomer} className="modal-form">
+              <h2>Add Customer</h2>
+              <form onSubmit={handleCreateCustomer} className="modal-form">
                 <label>
-                  Customer / Business Name
-                  <input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="e.g. Global Tech Solutions" required />
+                  Customer Name
+                  <input value={custName} onChange={(e) => setCustName(e.target.value)} required placeholder="e.g. Global Tech Solutions" />
                 </label>
                 <label>
-                  Contact Email
-                  <input type="email" value={custEmail} onChange={(e) => setCustEmail(e.target.value)} placeholder="finance@globaltech.com" />
+                  Email Address
+                  <input type="email" value={custEmail} onChange={(e) => setCustEmail(e.target.value)} placeholder="billing@globaltech.com" />
                 </label>
                 <label>
-                  Initial Outstanding Balance (₹)
-                  <input type="number" value={custAmount} onChange={(e) => setCustAmount(e.target.value)} placeholder="0" />
+                  Initial Outstanding (₹)
+                  <input type="number" value={custOutstanding} onChange={(e) => setCustOutstanding(e.target.value)} placeholder="0" />
                 </label>
                 <label>
-                  Payment Reliability Score (0 - 100)
-                  <input type="number" min="0" max="100" value={custScore} onChange={(e) => setCustScore(e.target.value)} required />
+                  Risk Level
+                  <select value={custRisk} onChange={(e) => setCustRisk(e.target.value)}>
+                    <option value="low">Low Risk</option>
+                    <option value="medium">Medium Risk</option>
+                    <option value="high">High Risk</option>
+                  </select>
                 </label>
                 <div className="modal-actions">
                   <button type="button" className="cancel-button" onClick={() => setShowAddCustomerModal(false)}>Cancel</button>
@@ -1702,92 +2291,156 @@ export default function Home() {
           </div>
         )}
 
-        {/* 4. ADD SUPPLIER MODAL */}
-        {showAddSupplierModal && (
-          <div className="modal-overlay" onClick={() => setShowAddSupplierModal(false)}>
+        {/* Add Expense Modal */}
+        {showAddExpenseModal && (
+          <div className="modal-overlay" onClick={() => setShowAddExpenseModal(false)}>
             <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Add Supplier</h2>
-                <button className="modal-close" onClick={() => setShowAddSupplierModal(false)}>×</button>
-              </div>
-              <form onSubmit={handleAddSupplier} className="modal-form">
+              <h2>Log Business Expense</h2>
+              <form onSubmit={handleCreateExpense} className="modal-form">
                 <label>
-                  Supplier Name
-                  <input value={supName} onChange={(e) => setSupName(e.target.value)} placeholder="e.g. CloudHost India" required />
+                  Category
+                  <input value={expCategory} onChange={(e) => setExpCategory(e.target.value)} required placeholder="e.g. Software & Hosting" />
                 </label>
                 <label>
-                  Credit Terms (Days)
-                  <input type="number" value={supCreditDays} onChange={(e) => setSupCreditDays(e.target.value)} required />
+                  Supplier / Vendor Name
+                  <input value={expSupplier} onChange={(e) => setExpSupplier(e.target.value)} placeholder="e.g. CloudHost India" />
                 </label>
                 <label>
-                  Estimated Total Annual Spend
-                  <input value={supTotalSpend} onChange={(e) => setSupTotalSpend(e.target.value)} placeholder="e.g. ₹3.5L" required />
+                  Amount (₹)
+                  <input type="number" value={expAmount} onChange={(e) => setExpAmount(e.target.value)} required placeholder="e.g. 45000" />
                 </label>
                 <div className="modal-actions">
-                  <button type="button" className="cancel-button" onClick={() => setShowAddSupplierModal(false)}>Cancel</button>
-                  <button type="submit" className="primary-button">Save Supplier</button>
+                  <button type="button" className="cancel-button" onClick={() => setShowAddExpenseModal(false)}>Cancel</button>
+                  <button type="submit" className="primary-button">Log Expense</button>
                 </div>
               </form>
             </div>
           </div>
         )}
 
-        {/* 5. ADD PROMISE TO PAY MODAL */}
-        {showAddPromiseModal && (
-          <div className="modal-overlay" onClick={() => setShowAddPromiseModal(false)}>
-            <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Record Promise to Pay</h2>
-                <button className="modal-close" onClick={() => setShowAddPromiseModal(false)}>×</button>
-              </div>
-              <form onSubmit={handleAddPromise} className="modal-form">
+        {/* Dataset Manager Modal */}
+        {showDatasetModal && (
+          <div className="modal-overlay" onClick={() => setShowDatasetModal(false)}>
+            <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "600px" }}>
+              <h2>Dataset Manager</h2>
+              <p style={{ fontSize: "13px", color: "#7d8580" }}>
+                Import custom CSV/JSON files or switch between saved datasets.
+              </p>
+
+              <form onSubmit={handleImportDataset} className="modal-form">
                 <label>
-                  Customer Name
-                  <input value={promCustomer} onChange={(e) => setPromCustomer(e.target.value)} placeholder="e.g. Northstar Studio" required />
+                  Dataset Name
+                  <input value={datasetName} onChange={(e) => setDatasetName(e.target.value)} required placeholder="e.g. Q3 Financial Dataset" />
                 </label>
+
                 <label>
-                  Promised Payment Amount (₹)
-                  <input type="number" value={promAmount} onChange={(e) => setPromAmount(e.target.value)} placeholder="e.g. 142000" required />
+                  CSV / JSON Content
+                  <textarea
+                    rows={5}
+                    value={datasetRawInput}
+                    onChange={(e) => setDatasetRawInput(e.target.value)}
+                    placeholder="Paste CSV (InvoiceNumber, CustomerName, Amount, DueDate) or JSON"
+                  />
                 </label>
-                <label>
-                  Promised Payment Date
-                  <input type="date" value={promDate} onChange={(e) => setPromDate(e.target.value)} required />
-                </label>
+
                 <div className="modal-actions">
-                  <button type="button" className="cancel-button" onClick={() => setShowAddPromiseModal(false)}>Cancel</button>
-                  <button type="submit" className="primary-button">Save Commitment</button>
+                  <button type="button" className="cancel-button" onClick={() => setShowDatasetModal(false)}>Cancel</button>
+                  <button type="submit" className="primary-button">Import & Save Dataset</button>
                 </div>
               </form>
             </div>
           </div>
         )}
 
-        {/* 6. INVITE TEAM MEMBER MODAL */}
-        {showInviteModal && (
-          <div className="modal-overlay" onClick={() => setShowInviteModal(false)}>
-            <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Invite Team Member</h2>
-                <button className="modal-close" onClick={() => setShowInviteModal(false)}>×</button>
+        {/* User Profile Modal */}
+        {showAuthModal && (
+          <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
+            <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "440px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "20px" }}>
+                <div
+                  style={{
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "50%",
+                    background: currentUser.permissions?.is_super_admin ? "#7c3aed" : "var(--orange, #e8793e)",
+                    color: "#ffffff",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: "20px",
+                    fontWeight: 800,
+                    boxShadow: "0 4px 14px rgba(232, 121, 62, 0.35)",
+                  }}
+                >
+                  {currentUser.full_name ? currentUser.full_name.charAt(0).toUpperCase() : "U"}
+                </div>
+
+                <div>
+                  <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 800, color: "var(--ink)" }}>{currentUser.full_name}</h2>
+                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#7d8580" }}>{currentUser.email}</p>
+                </div>
               </div>
-              <form onSubmit={handleInviteMember} className="modal-form">
+
+              {/* Account Profile Card */}
+              <div style={{ background: "#fafbf8", border: "1px solid var(--line)", borderRadius: "10px", padding: "16px", marginBottom: "20px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "13px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "#7d8580", fontSize: "12px" }}>Organization</span>
+                    <strong style={{ color: "var(--ink)" }}>ABC Digital Solutions</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "#7d8580", fontSize: "12px" }}>Assigned Role</span>
+                    <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 10px", borderRadius: "12px", background: currentUser.permissions?.is_super_admin ? "#7c3aed" : "rgba(28,139,105,0.12)", color: currentUser.permissions?.is_super_admin ? "#ffffff" : "var(--emerald)" }}>
+                      {currentUser.permissions?.role_name || currentUser.role}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--line)", paddingTop: "16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="cancel-button"
+                  onClick={handleLogout}
+                  style={{ color: "#cc5d5d", borderColor: "#f8c0b6", background: "#fff0ed" }}
+                >
+                  Logout Session
+                </button>
+                <button type="button" className="primary-button" onClick={() => setShowAuthModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add User Modal */}
+        {showAddUserModal && (
+          <div className="modal-overlay" onClick={() => setShowAddUserModal(false)}>
+            <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+              <h2>Create New Team Account</h2>
+              <form onSubmit={handleCreateUserSubmit} className="modal-form">
                 <label>
-                  Member Email:
-                  <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} required placeholder="colleague@company.com" />
+                  Full Name
+                  <input type="text" required value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="e.g. Vikram Sharma" />
                 </label>
                 <label>
-                  Assigned RBAC Role:
-                  <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)}>
-                    <option value="admin">Admin</option>
-                    <option value="finance_manager">Finance Manager</option>
-                    <option value="accountant">Accountant</option>
-                    <option value="collections">Collections Manager</option>
+                  Email Address
+                  <input type="email" required value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="vikram@abcdigital.com" />
+                </label>
+                <label>
+                  Role Permission Level
+                  <select value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)}>
+                    <option value="owner">Owner (Full Access)</option>
+                    <option value="admin">Admin (Operations & User Admin)</option>
+                    <option value="finance_manager">Finance Manager (Cash & Analytics)</option>
+                    <option value="accountant">Accountant (Invoices & Expenses)</option>
+                    <option value="collections_manager">Collections Manager (Receivables & Reminders)</option>
                     <option value="viewer">Viewer (Read-Only)</option>
                   </select>
                 </label>
                 <div className="modal-actions">
-                  <button type="button" className="cancel-button" onClick={() => setShowInviteModal(false)}>Cancel</button>
-                  <button type="submit" className="primary-button">Send Invitation</button>
+                  <button type="button" className="cancel-button" onClick={() => setShowAddUserModal(false)}>Cancel</button>
+                  <button type="submit" className="primary-button">Create User</button>
                 </div>
               </form>
             </div>

@@ -2,19 +2,19 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+Run both the Next.js Frontend (port 3000) and FastAPI Backend (port 8000) with a single command:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Alternatively using Docker:
+```bash
+docker compose up
+```
+
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Backend API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
