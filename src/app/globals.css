@@ -364,10 +364,108 @@ button, input, select, textarea {
   to { opacity: 1; transform: scale(1); } 
 }
 
+/* --- Mobile Responsive Styling & Touch Optimization --- */
+.mobile-nav-toggle {
+  display: none;
+}
+
 @media (max-width: 900px) {
-  .sidebar { width: 68px; padding: 20px 8px; }
-  .brand > span:last-child, .nav-item span:last-child { display: none; }
-  .nav-item { justify-content: center; padding: 12px 0; }
-  .main { padding: 20px 16px; }
-  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  .app-shell {
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .mobile-nav-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #ffffff;
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 999;
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.3);
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 998;
+  }
+
+  .main {
+    padding: 16px;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+  }
+
+  .header {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    gap: 8px;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 12px;
+  }
+
+  .auth-hero-banner {
+    display: none !important;
+  }
+
+  .auth-form-panel {
+    width: 100% !important;
+    padding: 24px 20px !important;
+  }
+
+  .modal-box {
+    width: 92vw !important;
+    max-width: 92vw !important;
+    padding: 20px 16px !important;
+  }
+}
+
+@media (max-width: 540px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .primary-button {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
 }

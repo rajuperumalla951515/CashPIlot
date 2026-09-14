@@ -24,6 +24,7 @@ import {
   IconDownload,
   IconSend,
   IconWarning,
+  IconMenu,
 } from "./icons";
 
 interface PaymentPromise {
@@ -384,6 +385,7 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
 
   const [activeNav, setActiveNav] = useState("Overview");
+  const [showMobileNav, setShowMobileNav] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
 
   // Core Data States
@@ -497,6 +499,7 @@ export default function Home() {
 
   function handleTabChange(tabName: string) {
     setActiveNav(tabName);
+    setShowMobileNav(false);
     setLoadingData(true);
     setTimeout(() => setLoadingData(false), 250);
   }
@@ -1166,6 +1169,7 @@ export default function Home() {
       >
         {/* Left Hero Branding Banner - Styled matching CashPilot sidebar theme */}
         <div
+          className="auth-hero-banner"
           style={{
             flex: 1,
             padding: "50px 60px",
@@ -1233,7 +1237,7 @@ export default function Home() {
         </div>
 
         {/* Right Authentication Form Panel - Fit to viewport */}
-        <div style={{ width: "480px", padding: "40px 48px", background: "#ffffff", color: "var(--ink)", display: "flex", flexDirection: "column", justifyContent: "center", overflowY: "auto" }}>
+        <div className="auth-form-panel" style={{ width: "480px", padding: "40px 48px", background: "#ffffff", color: "var(--ink)", display: "flex", flexDirection: "column", justifyContent: "center", overflowY: "auto" }}>
           <div style={{ marginBottom: "24px" }}>
             <h2 style={{ fontSize: "24px", fontWeight: 800, margin: 0, letterSpacing: "-0.8px" }}>
               {authViewMode === "login" ? "Sign In to CashPilot" : "Create CashPilot Account"}
@@ -1432,8 +1436,14 @@ export default function Home() {
 
   return (
     <div className="app-shell">
+      {/* Mobile Sidebar Backdrop Overlay */}
+      <div
+        className={`sidebar-backdrop ${showMobileNav ? "active" : ""}`}
+        onClick={() => setShowMobileNav(false)}
+      />
+
       {/* Sidebar Navigation */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${showMobileNav ? "mobile-open" : ""}`}>
         <div className="brand">
           <span className="brand-mark">CP</span>
           <span>CashPilot</span>
@@ -1472,13 +1482,32 @@ export default function Home() {
       <main className="main">
         {/* Header */}
         <header className="header">
-          <div>
-            <h1 style={{ fontSize: "22px", fontWeight: 800, margin: 0, letterSpacing: "-0.8px", color: "var(--ink)" }}>
-              {activeNav}
-            </h1>
-            <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#7d8580" }}>
-              Enterprise Financial Intelligence & Cash Flow Optimizer
-            </p>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <button
+              className="mobile-nav-toggle"
+              onClick={() => setShowMobileNav(!showMobileNav)}
+              aria-label="Toggle navigation drawer"
+              style={{
+                display: "none",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "8px",
+                borderRadius: "8px",
+                border: "1px solid var(--line)",
+                background: "#ffffff",
+                cursor: "pointer",
+              }}
+            >
+              <IconMenu size={20} color="var(--ink)" />
+            </button>
+            <div>
+              <h1 style={{ fontSize: "22px", fontWeight: 800, margin: 0, letterSpacing: "-0.8px", color: "var(--ink)" }}>
+                {activeNav}
+              </h1>
+              <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#7d8580" }}>
+                Enterprise Financial Intelligence & Cash Flow Optimizer
+              </p>
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
