@@ -406,11 +406,24 @@ button, input, select, textarea {
   }
 
   .sidebar-backdrop {
+    display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     z-index: 998;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .sidebar-backdrop.active {
+    display: block;
+    opacity: 1;
+  }
+
+  .mobile-nav-toggle {
+    display: inline-flex !important;
   }
 
   .main {

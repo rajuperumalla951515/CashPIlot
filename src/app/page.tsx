@@ -1437,10 +1437,12 @@ export default function Home() {
   return (
     <div className="app-shell">
       {/* Mobile Sidebar Backdrop Overlay */}
-      <div
-        className={`sidebar-backdrop ${showMobileNav ? "active" : ""}`}
-        onClick={() => setShowMobileNav(false)}
-      />
+      {showMobileNav && (
+        <div
+          className="sidebar-backdrop active"
+          onClick={() => setShowMobileNav(false)}
+        />
+      )}
 
       {/* Sidebar Navigation */}
       <aside className={`sidebar ${showMobileNav ? "mobile-open" : ""}`}>
